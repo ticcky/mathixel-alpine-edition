@@ -9,7 +9,7 @@ A pixel-picture arithmetic game based on [davidmarek/mathogram](https://github.c
 
 ## Play online
 
-[Open Mathixel Alpine Edition](https://ticcky.github.io/mathixel-alpine-edition/)
+[Open Mathixel Alpine Edition](https://mathixel-alpine.zilka.me/)
 
 ## Run locally
 
