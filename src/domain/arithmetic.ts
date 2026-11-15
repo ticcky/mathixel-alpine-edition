@@ -1,6 +1,6 @@
 export interface Equation {
   a: number;
-  op: '+' | '-' | '×';
+  op: '+' | '-' | '×' | '÷';
   b: number;
   c: number;
   op2?: '+' | '-';
@@ -211,4 +211,16 @@ export function enumerateMultiplication(): Equation[] {
     }
   }
   return equations;
+}
+
+/** Inverse of the 1–10 times table: exact division with dividends up to 100. */
+export function enumerateDivision(): Equation[] {
+  return enumerateMultiplication().map(({ a, b, c }) => ({ a: c, op: '÷', b, c: a }));
+}
+
+export function isValidDivision(value: unknown): value is Equation {
+  if (typeof value !== 'object' || value === null) return false;
+  if (!('a' in value && 'b' in value && 'c' in value && 'op' in value)) return false;
+  if (value.op !== '÷' || 'op2' in value || 'd' in value) return false;
+  return isValidMultiplication({ a: value.c, op: '×', b: value.b, c: value.a });
 }

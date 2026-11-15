@@ -1165,3 +1165,34 @@ it('accepts 10 × 10 = 100 through the multiplication answer field', () => {
   submit();
   expect(JSON.parse(localStorage.getItem(key)!).attempts.fish.solved).toHaveLength(1);
 });
+
+it('solves division up to 100 and restores its progress separately from other modes', () => {
+  const progress = emptyProgress('en');
+  const attempt = createAttempt(puzzles[0]!, () => 0.4, undefined, 'division');
+  attempt.queue[0]!.equation = { a: 100, op: '÷', b: 10, c: 10 };
+  progress.attempts.fish = attempt;
+  const key = `${STORAGE_KEY}.division`;
+  localStorage.setItem(key, JSON.stringify(progress));
+  const view = render(<App />);
+  openFish();
+  const addition = saved().attempts.fish;
+  fireEvent.click(screen.getByRole('button', { name: 'Multiplication' }));
+  openFish();
+  const multiply = localStorage.getItem(`${STORAGE_KEY}.multiplication`);
+  fireEvent.click(screen.getByRole('button', { name: 'Division' }));
+  expect(screen.getByRole('button', { name: 'Division' })).toHaveAttribute('aria-pressed', 'true');
+  openFish();
+  expect(screen.getByTestId('equation')).toHaveTextContent('100 ÷ 10');
+  enter('10');
+  submit();
+  const solved = JSON.parse(localStorage.getItem(key)!);
+  expect(solved.attempts.fish.solved).toHaveLength(1);
+  expect(saved().attempts.fish).toEqual(addition);
+  expect(localStorage.getItem(`${STORAGE_KEY}.multiplication`)).toBe(multiply);
+  view.unmount();
+  render(<App />);
+  fireEvent.click(screen.getByRole('button', { name: 'Division' }));
+  openFish();
+  expect(JSON.parse(localStorage.getItem(key)!).attempts.fish).toEqual(solved.attempts.fish);
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+});

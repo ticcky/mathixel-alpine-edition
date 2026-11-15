@@ -100,6 +100,7 @@ function recover(value: unknown, fallbackLanguage: Language): LoadResult {
       // Rebuild from validated fields; never carry unknown saved properties forward.
       progress.attempts[id] = {
         ...(attempt.multiplication ? { multiplication: true as const, multiplicationTable: true as const } : {}),
+        ...(attempt.division ? { division: true as const } : {}),
         puzzleId: attempt.puzzleId,
         puzzleVersion: attempt.puzzleVersion,
         queue: attempt.queue.map(({ pixelId, equation }) => ({

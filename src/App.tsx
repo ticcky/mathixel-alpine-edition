@@ -88,7 +88,10 @@ const parkPictures = puzzles.filter((puzzle) =>
 );
 
 export function App() {
-  const [multiplication, setMultiplication] = useState(false);
+  const [mode, setMode] = useState<'addition' | 'multiplication' | 'division'>('addition');
+  const multiplication = mode === 'multiplication';
+  const division = mode === 'division';
+  const tableMode = mode !== 'addition';
   const [initial] = useState(initialProgress);
   const [progress, setProgress] = useState(initial.progress);
   const progressRef = useRef(progress);
@@ -135,7 +138,7 @@ export function App() {
       ? Number(current.pixelId.split(':')[0])
       : undefined;
   const rules: ArithmeticRules | undefined =
-    multiplication || progress.exercises === 'picture' ? undefined : progress.exercises;
+    tableMode || progress.exercises === 'picture' ? undefined : progress.exercises;
   const canStart = (selected: Puzzle) => fitsRules(selected, rules);
   const describeRules = ({
     maxNumber,
@@ -230,7 +233,7 @@ export function App() {
 
   function persist(next: Progress): boolean {
     const storage = browserStorage();
-    const ok = storage !== null && saveProgress(storage, next, multiplication ? `${STORAGE_KEY}.multiplication` : STORAGE_KEY).ok;
+    const ok = storage !== null && saveProgress(storage, next, tableMode ? `${STORAGE_KEY}.${mode}` : STORAGE_KEY).ok;
     if (!ok) setNotice('unavailable');
     else
       setNotice((previous) => (previous === 'unavailable' ? null : previous));
@@ -256,7 +259,7 @@ export function App() {
     const previous = progressRef.current;
     const startNew = replay || !previous.attempts[id];
     const chosen =
-      multiplication || previous.exercises === 'picture' ? undefined : previous.exercises;
+      tableMode || previous.exercises === 'picture' ? undefined : previous.exercises;
     if (startNew && !fitsRules(selected, chosen)) return;
     clearInteraction();
     if (startNew) {
@@ -264,7 +267,7 @@ export function App() {
         ...previous,
         attempts: {
           ...previous.attempts,
-          [id]: createAttempt(selected, Math.random, chosen, multiplication),
+          [id]: createAttempt(selected, Math.random, chosen, division ? 'division' : multiplication),
         },
       });
       trackPuzzleStarted(id, {
@@ -285,16 +288,16 @@ export function App() {
     window.history.replaceState({ mathogramPuzzle: null }, '');
     setActiveId(null);
   }
-  function changeArithmeticMode(next: boolean) {
-    if (next === multiplication) return;
+  function changeArithmeticMode(next: typeof mode) {
+    if (next === mode) return;
     const storage = browserStorage();
     const loaded = storage
-      ? loadProgress(storage, progress.language, next ? `${STORAGE_KEY}.multiplication` : STORAGE_KEY)
+      ? loadProgress(storage, progress.language, next !== 'addition' ? `${STORAGE_KEY}.${next}` : STORAGE_KEY)
       : { progress: emptyProgress(progress.language), notice: 'unavailable' as const };
     const nextProgress = { ...loaded.progress, language: progress.language, theme: progress.theme, showRowHints: progress.showRowHints };
     goHome();
     setModal(null);
-    setMultiplication(next);
+    setMode(next);
     progressRef.current = nextProgress;
     setProgress(nextProgress);
     setNotice(loaded.notice);
@@ -338,7 +341,7 @@ export function App() {
           : 'practiceCorrect'
         : next === attempt
           ? 'retryOnly'
-          : Number(answer) < 1 || Number(answer) > (multiplication ? 100 : 20)
+          : Number(answer) < 1 || Number(answer) > (multiplication ? 100 : division ? 10 : 20)
             ? 'range'
             : 'retry',
     );
@@ -446,10 +449,11 @@ export function App() {
       </header>
 
       <div className="arithmetic-switch" role="group" aria-label={t.arithmeticMode}>
-        <button type="button" aria-pressed={!multiplication} onClick={() => changeArithmeticMode(false)}>{t.additionSubtraction}</button>
-        <button type="button" aria-pressed={multiplication} onClick={() => changeArithmeticMode(true)}>{t.multiplication}</button>
+        <button type="button" aria-pressed={mode === 'addition'} onClick={() => changeArithmeticMode('addition')}>{t.additionSubtraction}</button>
+        <button type="button" aria-pressed={multiplication} onClick={() => changeArithmeticMode('multiplication')}>{t.multiplication}</button>
+        <button type="button" aria-pressed={division} onClick={() => changeArithmeticMode('division')}>{t.division}</button>
       </div>
-      {multiplication && <p className="multiplication-hint">{t.multiplicationHelp}</p>}
+      {tableMode && <p className="multiplication-hint">{division ? t.divisionHelp : t.multiplicationHelp}</p>}
 
       {notice && (
         <div className="notice" role="alert">
@@ -689,7 +693,7 @@ export function App() {
                 <span aria-hidden="true">←</span> {t.gallery}
               </button>
               <span className="level-pill">
-                {attempt.multiplication ? t.multiplication : attempt.rules
+                {attempt.division ? t.division : attempt.multiplication ? t.multiplication : attempt.rules
                   ? describeRules(attempt.rules)
                   : t[getDifficulty(puzzle)]}
               </span>
@@ -705,7 +709,7 @@ export function App() {
                   t={t}
                 />
                 <p className="picture-caption">
-                  {reviewing ? t.practiceHint : multiplication ? t.multiplicationPlayHint : t.playHint}
+                  {reviewing ? t.practiceHint : division ? t.divisionPlayHint : multiplication ? t.multiplicationPlayHint : t.playHint}
                 </p>
               </div>
               <form
@@ -791,7 +795,7 @@ export function App() {
                 >
                   {feedback ? (
                     <>
-                      {feedback === 'range' && multiplication ? t.multiplicationRange : t[feedback]}
+                      {feedback === 'range' && division ? t.divisionRange : feedback === 'range' && multiplication ? t.multiplicationRange : t[feedback]}
                       {feedback === 'correct' && latest && progress.showRowHints
                         ? ` ${t.coordinate} ${String.fromCharCode(64 + Number(latest.split(':')[0]))}${latest.split(':')[1]}.`
                         : ''}
@@ -890,8 +894,8 @@ export function App() {
           {modal === 'help' ? (
             <>
               <h3>{t.howTitle}</h3>
-              <p>{multiplication ? t.multiplicationHelp : t.howBody}</p>
-              {!multiplication && <p>{t.threeNumbersHelp}</p>}
+              <p>{division ? t.divisionHelp : multiplication ? t.multiplicationHelp : t.howBody}</p>
+              {!tableMode && <p>{t.threeNumbersHelp}</p>}
               <p>{t.gentle}</p>
               {!standalone && (
                 <>
@@ -950,7 +954,7 @@ export function App() {
                 {t.showRowHints}
               </label>
               <p id="row-hints-help">{t.rowHintsHelp}</p>
-              {!multiplication && <>
+              {!tableMode && <>
               <h3>{t.exercisesTitle}</h3>
               <label className="language-setting">
                 {t.exerciseMode}

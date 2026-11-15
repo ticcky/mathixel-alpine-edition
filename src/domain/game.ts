@@ -1,5 +1,7 @@
 import {
   crossesTen,
+  enumerateDivision,
+  isValidDivision,
   enumerateMultiplication,
   isValidMultiplication,
   enumerateEquations,
@@ -13,6 +15,7 @@ import { isRecord, validatePuzzle } from './puzzle';
 import type { Equation, Puzzle } from './puzzle';
 
 export interface Attempt {
+  division?: true;
   multiplication?: true;
   multiplicationTable?: true;
   puzzleId: string;
@@ -52,9 +55,12 @@ export function createAttempt(
   puzzle: Puzzle,
   random: () => number = Math.random,
   rules?: ArithmeticRules,
-  multiplication = false,
+  mode: boolean | 'division' = false,
 ): Attempt {
-  if (multiplication) rules = undefined;
+  const multiplication = mode === true;
+  const division = mode === 'division';
+  const tableMode = multiplication || division;
+  if (tableMode) rules = undefined;
   if (!validatePuzzle(puzzle)) throw new TypeError('Invalid puzzle.');
   if (
     rules !== undefined &&
@@ -68,13 +74,13 @@ export function createAttempt(
     pixels[index] = pixels[other]!;
     pixels[other] = current;
   }
-  const candidates = multiplication ? enumerateMultiplication() : rules
+  const candidates = division ? enumerateDivision() : multiplication ? enumerateMultiplication() : rules
     ? enumerateRuleEquations(rules)
     : enumerateEquations(puzzle.intro, puzzle.threeNumbers);
   const uses = new Map<string, number>();
   let previousOp: Equation['op'] | undefined;
   const queue = pixels.map((pixel) => {
-    let choices = multiplication ? [...candidates] : candidates.filter(({ c }) => c === pixel.col);
+    let choices = tableMode ? [...candidates] : candidates.filter(({ c }) => c === pixel.col);
     if (rules?.crossTen) {
       const crossing = choices.filter(crossesTen);
       if (crossing.length > 0) choices = crossing;
@@ -99,6 +105,7 @@ export function createAttempt(
   });
   return {
     ...(multiplication ? { multiplication: true as const, multiplicationTable: true as const } : {}),
+    ...(division ? { division: true as const } : {}),
     puzzleId: puzzle.id,
     puzzleVersion: puzzle.version,
     queue,
@@ -219,6 +226,8 @@ export function validateAttempt(
     !Array.isArray(value.solved) ||
     value.solved.length > value.queue.length ||
     ('multiplicationTable' in value && (value.multiplicationTable !== true || value.multiplication !== true)) ||
+    ('division' in value && value.division !== true) ||
+    (value.division === true && ('multiplication' in value || 'rules' in value)) ||
     ('multiplication' in value && value.multiplication !== true) ||
     (value.multiplication === true && 'rules' in value) ||
     ('rules' in value && !isValidRules(value.rules))
@@ -233,12 +242,12 @@ export function validateAttempt(
       !isRecord(entry) ||
       typeof entry.pixelId !== 'string' ||
       seen.has(entry.pixelId) ||
-      !(value.multiplication === true ? isValidMultiplication(entry.equation, legacyMultiplication) : rules
+      !(value.division === true ? isValidDivision(entry.equation) : value.multiplication === true ? isValidMultiplication(entry.equation, legacyMultiplication) : rules
         ? isValidRuleEquation(entry.equation, rules)
         : isValidEquation(entry.equation, puzzle.intro, puzzle.threeNumbers)) ||
       !isRecord(entry.equation) ||
       !pixels.has(entry.pixelId) ||
-      ((value.multiplication !== true || legacyMultiplication) && entry.equation.c !== pixels.get(entry.pixelId)?.col)
+      ((value.division !== true && (value.multiplication !== true || legacyMultiplication)) && entry.equation.c !== pixels.get(entry.pixelId)?.col)
     ) {
       return false;
     }

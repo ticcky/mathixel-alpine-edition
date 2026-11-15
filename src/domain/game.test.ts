@@ -997,3 +997,28 @@ it('covers all 100 multiplication pairs before repeating and accepts 100', () =>
   attempt.queue[0]!.pixelId = '99:99';
   expect(validateAttempt(attempt, puzzle)).toBe(false);
 });
+
+it('covers the division table up to 100 and rejects invalid saved division', () => {
+  const puzzle = puzzles.find((item) => item.pixels.length > 100)!;
+  const attempt = createAttempt(puzzle, seededRandom(11), undefined, 'division');
+  expect(validateAttempt(attempt, puzzle)).toBe(true);
+  const pairs = new Set(attempt.queue.slice(0, 100).map(({ equation }) => `${equation.a}/${equation.b}`));
+  expect(pairs.size).toBe(100);
+  for (let divisor = 1; divisor <= 10; divisor++) {
+    for (let answer = 1; answer <= 10; answer++) expect(pairs.has(`${divisor * answer}/${divisor}`)).toBe(true);
+  }
+  attempt.queue[0]!.equation = { a: 100, op: '÷', b: 10, c: 10 };
+  expect(submitAnswer(attempt, '10', attempt.queue[0]!.pixelId).solved).toHaveLength(1);
+  expect(submitAnswer(attempt, '9', attempt.queue[0]!.pixelId)).toBe(attempt);
+  for (const equation of [
+    { a: 100, op: '÷' as const, b: 0, c: 10 },
+    { a: 99, op: '÷' as const, b: 10, c: 9.9 },
+    { a: 110, op: '÷' as const, b: 10, c: 11 },
+  ]) {
+    expect(validateAttempt({ ...attempt, queue: [{ ...attempt.queue[0]!, equation }, ...attempt.queue.slice(1)] }, puzzle)).toBe(false);
+  }
+  expect(validateAttempt({ ...attempt, multiplication: true }, puzzle)).toBe(false);
+  const unmarked = { ...attempt };
+  delete unmarked.division;
+  expect(validateAttempt(unmarked, puzzle)).toBe(false);
+});

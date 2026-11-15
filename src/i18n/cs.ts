@@ -3,6 +3,10 @@ import type { Messages } from './en';
 export const cs: Messages = {
   arithmeticMode: 'Druh příkladů',
   additionSubtraction: 'Sčítání / odčítání',
+  division: 'Dělení',
+  divisionRange: 'Výsledek musí být od 1 do 10.',
+  divisionPlayHint: 'Vyřeš dělení a odhal políčko.',
+  divisionHelp: 'Procvičuj dělení do 100 podle násobilky 1–10, beze zbytku. Každá správná odpověď odhalí políčko. Každý režim ukládá obrázky zvlášť.',
   multiplication: 'Násobení',
   multiplicationRange: 'Výsledek musí být od 1 do 100. Nejdřív zkus jiný příklad.',
   multiplicationPlayHint: 'Vyřeš násobení a odhal políčko.',

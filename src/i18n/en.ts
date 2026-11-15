@@ -13,6 +13,10 @@
 export const en = {
   arithmeticMode: 'Exercise type',
   additionSubtraction: 'Addition / subtraction',
+  division: 'Division',
+  divisionRange: 'Your answer needs to be between 1 and 10.',
+  divisionPlayHint: 'Solve the division to reveal a pixel.',
+  divisionHelp: 'Divide numbers up to 100 using the 1–10 times table, without remainders. Each correct answer reveals a pixel. Each mode saves your pictures separately.',
   multiplication: 'Multiplication',
   multiplicationRange: 'Your answer needs to be between 1 and 100. Try another exercise first.',
   multiplicationPlayHint: 'Solve the multiplication to reveal a pixel.',

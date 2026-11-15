@@ -1,9 +1,10 @@
 # Mathixel Alpine Edition
 
-A pixel-picture arithmetic game based on [davidmarek/mathogram](https://github.com/davidmarek/mathogram), with addition/subtraction and multiplication modes.
+A pixel-picture arithmetic game based on [davidmarek/mathogram](https://github.com/davidmarek/mathogram), with addition/subtraction multiplication, and division modes.
 
 - Switch modes at the top of the page.
 - Multiplication covers every pair from **1 × 1 through 10 × 10**, with answers up to **100**.
+- Division uses the inverse 1–10 times table, with dividends up to **100** and no remainders.
 - Correct answers reveal pixels automatically. Each mode saves its own progress in your browser.
 - English and Czech interfaces, offline support, and light/dark themes.
 
