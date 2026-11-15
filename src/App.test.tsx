@@ -1,0 +1,1167 @@
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { App } from './App';
+import { puzzles } from './content/animals';
+import { difficulties, getDifficulty } from './domain/categories';
+import { createAttempt, currentExercise } from './domain/game';
+import { emptyProgress, STORAGE_KEY } from './storage/progress';
+import type { Progress } from './storage/progress';
+import { detectLanguage, messages } from './i18n';
+import { StrictMode } from 'react';
+
+const analytics = vi.hoisted(() => ({
+  enabled: false,
+  trackScreen: vi.fn(),
+  trackPuzzleStarted: vi.fn(),
+  trackPuzzleCompleted: vi.fn(),
+  trackPuzzleLeft: vi.fn(),
+  trackDialogOpened: vi.fn(),
+  trackSettingChanged: vi.fn(),
+  trackPuzzleTime: vi.fn(),
+}));
+vi.mock('./analytics', () => ({
+  get analyticsEnabled() {
+    return analytics.enabled;
+  },
+  trackScreen: analytics.trackScreen,
+  trackPuzzleStarted: analytics.trackPuzzleStarted,
+  trackPuzzleCompleted: analytics.trackPuzzleCompleted,
+  trackPuzzleLeft: analytics.trackPuzzleLeft,
+  trackDialogOpened: analytics.trackDialogOpened,
+  trackSettingChanged: analytics.trackSettingChanged,
+  trackPuzzleTime: analytics.trackPuzzleTime,
+  analyticsAllowed: () => analytics.enabled,
+}));
+
+const pwa = vi.hoisted(() => ({
+  ready: false,
+  waiting: false,
+  error: false,
+  offline: false,
+  acceptUpdate: vi.fn<() => Promise<boolean>>().mockResolvedValue(true),
+  retry: vi.fn(),
+}));
+vi.mock('./pwa/usePwa', () => ({ usePwa: () => pwa }));
+
+function saved(): Progress {
+  return JSON.parse(localStorage.getItem(STORAGE_KEY)!);
+}
+function firstAnswer(): string {
+  const attempt = saved().attempts.fish!;
+  return String(currentExercise(attempt)!.equation.c);
+}
+function openFish() {
+  fireEvent.click(screen.getByRole('button', { name: /Fish/ }));
+}
+function enter(value: string) {
+  fireEvent.change(screen.getByRole('textbox', { name: 'Your answer' }), {
+    target: { value },
+  });
+}
+function submit() {
+  fireEvent.click(screen.getByRole('button', { name: 'Check' }));
+}
+
+beforeEach(() => {
+  localStorage.clear();
+  vi.spyOn(Math, 'random').mockReturnValue(0.4);
+  vi.stubGlobal(
+    'matchMedia',
+    vi.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+    })),
+  );
+  vi.spyOn(navigator, 'languages', 'get').mockReturnValue(['en-GB']);
+  pwa.ready = pwa.waiting = pwa.error = pwa.offline = false;
+  pwa.acceptUpdate.mockClear();
+  analytics.enabled = false;
+  analytics.trackScreen.mockClear();
+  analytics.trackPuzzleStarted.mockClear();
+  analytics.trackPuzzleCompleted.mockClear();
+  analytics.trackPuzzleLeft.mockClear();
+  analytics.trackDialogOpened.mockClear();
+  analytics.trackSettingChanged.mockClear();
+  analytics.trackPuzzleTime.mockClear();
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
+
+describe('appearance settings', () => {
+  it('follows system changes, honors overrides and removes its listener', () => {
+    const preference = {
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    };
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) =>
+        query === '(prefers-color-scheme: dark)'
+          ? preference
+          : { matches: false },
+      ),
+    );
+    const view = render(<App />);
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    const listener = preference.addEventListener.mock
+      .calls[0]![1] as () => void;
+    preference.matches = false;
+    act(listener);
+    expect(document.documentElement.dataset.theme).toBe('light');
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    const appearance = screen.getByRole('combobox', { name: 'Appearance' });
+    fireEvent.change(appearance, { target: { value: 'dark' } });
+    expect(saved().theme).toBe('dark');
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    const overrideListener = preference.addEventListener.mock.calls.at(
+      -1,
+    )![1] as () => void;
+    act(overrideListener);
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    view.unmount();
+    expect(preference.removeEventListener).toHaveBeenLastCalledWith(
+      'change',
+      overrideListener,
+    );
+  });
+
+  it('changes appearance in memory even when preferences cannot be saved', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('Blocked', 'SecurityError');
+    });
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Appearance' }), {
+      target: { value: 'dark' },
+    });
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(screen.getByRole('combobox', { name: 'Appearance' })).toHaveValue(
+      'dark',
+    );
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+});
+
+describe('aggregate puzzle analytics', () => {
+  it('times solving but excludes dialogs, gallery and completed pictures', () => {
+    vi.useFakeTimers({
+      toFake: [
+        'setTimeout',
+        'clearTimeout',
+        'setInterval',
+        'clearInterval',
+        'performance',
+      ],
+    });
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    analytics.enabled = true;
+    const progress = emptyProgress('en');
+    const attempt = createAttempt(puzzles[0]!);
+    attempt.solved = attempt.queue.slice(0, -1).map(({ pixelId }) => pixelId);
+    progress.attempts.fish = attempt;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
+    const view = render(<App />);
+    openFish();
+    act(() => vi.advanceTimersByTime(10_000));
+    fireEvent.click(screen.getByRole('button', { name: 'Help' }));
+    expect(analytics.trackPuzzleTime.mock.calls).toEqual([['fish', 10]]);
+    act(() => vi.advanceTimersByTime(120_000));
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    act(() => vi.advanceTimersByTime(5_000));
+    enter(firstAnswer());
+    submit();
+    expect(analytics.trackPuzzleTime.mock.calls).toEqual([
+      ['fish', 10],
+      ['fish', 5],
+    ]);
+    act(() => vi.advanceTimersByTime(120_000));
+    fireEvent.click(screen.getByRole('button', { name: 'My pictures' }));
+    act(() => vi.advanceTimersByTime(120_000));
+    view.unmount();
+    expect(analytics.trackPuzzleTime).toHaveBeenCalledTimes(2);
+  });
+
+  it('counts fresh attempts, confirmed restarts and replays, but not resumes or cancelled restarts', () => {
+    const view = render(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+    );
+    expect(analytics.trackPuzzleStarted).not.toHaveBeenCalled();
+    openFish();
+    expect(analytics.trackPuzzleStarted).toHaveBeenCalledExactlyOnceWith(
+      'fish',
+      {
+        replay: false,
+        exercises: 'picture',
+        display: 'browser',
+      },
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'My pictures' }));
+    openFish();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Restart this picture' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(analytics.trackPuzzleStarted).toHaveBeenCalledTimes(1);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Restart this picture' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Start over' }));
+    expect(analytics.trackPuzzleStarted).toHaveBeenCalledTimes(2);
+    expect(analytics.trackPuzzleStarted).toHaveBeenLastCalledWith('fish', {
+      replay: true,
+      exercises: 'picture',
+      display: 'browser',
+    });
+    view.unmount();
+    render(<App />);
+    openFish();
+    expect(analytics.trackPuzzleStarted).toHaveBeenCalledTimes(2);
+  });
+
+  it('counts only the final reveal once, not incorrect answers, practice or completed-picture reopening', () => {
+    vi.useFakeTimers();
+    const progress = emptyProgress('en');
+    const attempt = createAttempt(puzzles[0]!);
+    attempt.solved = attempt.queue.slice(0, -1).map(({ pixelId }) => pixelId);
+    progress.attempts.fish = attempt;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
+    const view = render(<App />);
+    openFish();
+    enter(firstAnswer() === '1' ? '2' : '1');
+    submit();
+    act(() => vi.advanceTimersByTime(900));
+    enter(firstAnswer());
+    submit();
+    act(() => vi.advanceTimersByTime(650));
+    expect(analytics.trackPuzzleCompleted).not.toHaveBeenCalled();
+    enter(firstAnswer());
+    const form = screen.getByRole('textbox').closest('form')!;
+    act(() => {
+      fireEvent.submit(form);
+      fireEvent.submit(form);
+    });
+    expect(analytics.trackPuzzleCompleted).toHaveBeenCalledExactlyOnceWith(
+      'fish',
+    );
+    view.unmount();
+    render(<App />);
+    openFish();
+    expect(analytics.trackPuzzleCompleted).toHaveBeenCalledTimes(1);
+    expect(analytics.trackPuzzleLeft).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Play again' }));
+    expect(analytics.trackPuzzleStarted).toHaveBeenCalledExactlyOnceWith(
+      'fish',
+      { replay: true, exercises: 'picture', display: 'browser' },
+    );
+    expect(analytics.trackPuzzleCompleted).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports opened dialogs and each changed setting, not unchanged ones', () => {
+    render(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+    );
+    expect(analytics.trackSettingChanged).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Help' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(analytics.trackDialogOpened.mock.calls).toEqual([
+      ['help'],
+      ['settings'],
+    ]);
+    fireEvent.change(screen.getByRole('combobox', { name: 'Appearance' }), {
+      target: { value: 'dark' },
+    });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Show row hints' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Exercise type' }), {
+      target: { value: 'crossing' },
+    });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Numbers up to' }), {
+      target: { value: '12' },
+    });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Sums' }), {
+      target: { value: 'add' },
+    });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Exercise type' }), {
+      target: { value: 'picture' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    openFish();
+    enter(firstAnswer());
+    submit();
+    expect(analytics.trackSettingChanged.mock.calls).toEqual([
+      ['theme', 'dark'],
+      ['rowHints', false],
+      ['exercises', 'custom'],
+      ['maxNumber', 20],
+      ['crossTen', true],
+      ['operations', 'both'],
+      ['maxNumber', 12],
+      ['operations', 'add'],
+      ['exercises', 'picture'],
+    ]);
+    expect(analytics.trackDialogOpened).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole('button', { name: /^Česky/ }));
+    expect(analytics.trackSettingChanged).toHaveBeenLastCalledWith(
+      'language',
+      'cs',
+    );
+    expect(analytics.trackSettingChanged).toHaveBeenCalledTimes(10);
+  });
+
+  it('reports each screen once and unfinished pictures when leaving them', () => {
+    const progress = emptyProgress('en');
+    const attempt = createAttempt(puzzles[0]!);
+    attempt.solved = attempt.queue.slice(0, 1).map(({ pixelId }) => pixelId);
+    progress.attempts.fish = attempt;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
+    render(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+    );
+    expect(analytics.trackScreen.mock.calls).toEqual([[null]]);
+    openFish();
+    expect(analytics.trackScreen.mock.calls).toEqual([[null], ['fish']]);
+    expect(analytics.trackPuzzleLeft).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'My pictures' }));
+    expect(analytics.trackScreen.mock.calls).toEqual([
+      [null],
+      ['fish'],
+      [null],
+    ]);
+    expect(analytics.trackPuzzleLeft).toHaveBeenCalledExactlyOnceWith(
+      'fish',
+      1,
+      attempt.queue.length,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(analytics.trackScreen).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(['en', 'cs'] as const)(
+    'discloses enabled analytics in %s Settings',
+    (language) => {
+      analytics.enabled = true;
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify(emptyProgress(language)),
+      );
+      render(<App />);
+      const t = messages[language];
+      fireEvent.click(screen.getByRole('button', { name: t.settings }));
+      expect(screen.getByText(t.analyticsBody)).toBeVisible();
+      expect(
+        screen.getByRole('link', { name: t.analyticsPolicy }),
+      ).toHaveAttribute('href', 'https://docs.umami.is/docs/faq');
+    },
+  );
+
+  it('does not claim to collect analytics in the default build', () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(
+      screen.queryByText(messages.en.analyticsBody),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe('bilingual gallery and settings', () => {
+  function expectGalleryPictures(language: 'en' | 'cs') {
+    const gallery = screen.getByRole('region', {
+      name: messages[language].galleryTitle,
+    });
+    const cards = within(gallery).getAllByRole('button');
+    expect(cards).toHaveLength(puzzles.length);
+    const names = cards.map((card) => {
+      const name = within(card).getByRole('heading', { level: 3 }).textContent!;
+      expect(card).toHaveAccessibleName(new RegExp(name));
+      expect(card).toBeVisible();
+      expect(card).toBeEnabled();
+      return name;
+    });
+    expect(names.sort()).toEqual(
+      puzzles.map((puzzle) => messages[language][puzzle.name]).sort(),
+    );
+  }
+
+  it('groups every picture by difficulty and orders each group by exercise count', () => {
+    const { container } = render(<App />);
+    expect(container.querySelectorAll('.picture-card')).toHaveLength(
+      puzzles.length,
+    );
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    expect(
+      [...container.querySelectorAll('.difficulty-group h2')].map(
+        (heading) => heading.textContent,
+      ),
+    ).toEqual(difficulties.map((difficulty) => messages.en[difficulty]));
+    for (const difficulty of difficulties) {
+      const group = screen.getByRole('region', {
+        name: messages.en[difficulty],
+      });
+      const expected = puzzles
+        .filter((puzzle) => getDifficulty(puzzle) === difficulty)
+        .sort((a, b) => a.pixels.length - b.pixels.length);
+      expect(
+        within(group)
+          .getAllByRole('button')
+          .map((card) => within(card).getByRole('heading').textContent),
+      ).toEqual(expected.map((puzzle) => messages.en[puzzle.name]));
+      expect(
+        [...group.querySelectorAll('.card-exercises')].map((element) =>
+          Number(element.textContent!.split(' ')[0]),
+        ),
+      ).toEqual(expected.map((puzzle) => puzzle.pixels.length));
+    }
+    expect(
+      screen.getByRole('button', { name: /Rocket/ }),
+    ).toHaveAccessibleDescription(/Advanced · Small · 1–40.*exercises/);
+  });
+
+  it('keeps every group available across play and language changes without changing saves', () => {
+    const progress = emptyProgress('en');
+    const attempt = createAttempt(puzzles[0]!);
+    attempt.solved = [attempt.queue[0]!.pixelId];
+    progress.attempts.fish = attempt;
+    progress.completed = ['butterfly'];
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
+    render(<App />);
+    expect(saved()).toEqual(progress);
+    openFish();
+    expect(screen.getByTestId('equation')).toHaveTextContent(/^\d+ [+−] \d+$/);
+    expect(saved().attempts.fish).toEqual(attempt);
+    fireEvent.click(screen.getByRole('button', { name: 'My pictures' }));
+    for (const difficulty of difficulties)
+      expect(
+        screen.getByRole('region', { name: messages.en[difficulty] }),
+      ).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: /Language: Čeština/ }));
+    for (const difficulty of difficulties)
+      expect(
+        screen.getByRole('region', { name: messages.cs[difficulty] }),
+      ).toBeVisible();
+    expectGalleryPictures('cs');
+    expect(saved().attempts.fish).toEqual(attempt);
+    expect(saved().completed).toEqual(['butterfly']);
+  });
+
+  it('offers all pictures without locks and switches every translation', () => {
+    render(<App />);
+    expectGalleryPictures('en');
+    fireEvent.click(screen.getByRole('button', { name: /Language: Čeština/ }));
+    expect(document.documentElement.lang).toBe('cs');
+    expect(saved().language).toBe('cs');
+    expectGalleryPictures('cs');
+    expect(
+      screen.getByRole('heading', { name: 'Který obrázek si dnes vybereš?' }),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: /Ryba/ }));
+    expect(
+      screen.getByRole('textbox', { name: 'Tvůj výsledek' }),
+    ).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'Ověřit' })).toBeDisabled();
+  });
+  it('displays and resumes a three-number equation after landing on ten', () => {
+    const puzzle = puzzles.find(({ id }) => id === 'cheetah')!;
+    const attempt = createAttempt(puzzle, () => 0.4);
+    const index = attempt.queue.findIndex(({ equation }) => equation.c === 7);
+    [attempt.queue[0], attempt.queue[index]] = [
+      attempt.queue[index]!,
+      attempt.queue[0]!,
+    ];
+    attempt.queue[0]!.equation = {
+      a: 14,
+      op: '-',
+      b: 4,
+      op2: '-',
+      d: 3,
+      c: 7,
+    };
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        ...emptyProgress('en'),
+        attempts: { cheetah: attempt },
+      }),
+    );
+    let view = render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: /Cheetah/ }));
+    expect(screen.getByText(messages.en.advanced)).toBeVisible();
+    expect(screen.getByTestId('equation')).toHaveTextContent('14 − 4 − 3');
+    enter('7');
+    submit();
+    expect(saved().attempts.cheetah!.solved).toEqual([
+      attempt.queue[0]!.pixelId,
+    ]);
+    view.unmount();
+    view = render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: /Cheetah/ }));
+    expect(saved().attempts.cheetah!.queue).toEqual(attempt.queue);
+    expect(screen.getByTestId('equation').textContent).toMatch(
+      /^\d+ [+−] \d+ [+−] \d+$/,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Language: Čeština/ }));
+    expect(screen.getByText(messages.cs.advanced)).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Gepard' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Nápověda' }));
+    expect(screen.getByText(messages.cs.threeNumbersHelp)).toBeVisible();
+    view.unmount();
+  });
+  it('detects Czech device languages and respects saved English', () => {
+    expect(detectLanguage(['sk', 'cs-CZ'])).toBe('cs');
+    expect(detectLanguage(['csb', 'en'])).toBe('en');
+    vi.spyOn(navigator, 'languages', 'get').mockReturnValue(['cs-CZ']);
+    const view = render(<App />);
+    expect(document.documentElement.lang).toBe('cs');
+    view.unmount();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(emptyProgress('en')));
+    render(<App />);
+    expect(document.documentElement.lang).toBe('en');
+  });
+  it('explains installation and storage and requires confirmation for resets', () => {
+    localStorage.setItem('another-app', 'safe');
+    render(<App />);
+    openFish();
+    enter(firstAnswer());
+    submit();
+    const before = saved();
+    fireEvent.click(screen.getByRole('button', { name: 'Help' }));
+    expect(screen.getByRole('dialog', { name: 'Help' })).toBeVisible();
+    expect(screen.getByText(/Turn on Open as Web App/)).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeVisible();
+    expect(screen.getByText(messages.en.storageBody)).toBeVisible();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Reset all my pictures' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(saved()).toEqual(before);
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Reset all my pictures' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Start over' }));
+    expect(saved()).toEqual(emptyProgress('en'));
+    expect(localStorage.getItem('another-app')).toBe('safe');
+  });
+  it('hides installation instructions in standalone mode', () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Help' }));
+    expect(
+      screen.queryByText('Add Mathixel to your home screen'),
+    ).not.toBeInTheDocument();
+  });
+  it('persists row hints and hides the active row visually and from screen readers', () => {
+    let view = render(<App />);
+    openFish();
+    expect(document.querySelector('.row-pill')).toBeVisible();
+    expect(document.querySelector('.active-row')).toBeVisible();
+    const before = saved().attempts.fish;
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    const setting = screen.getByRole('checkbox', { name: 'Show row hints' });
+    expect(setting).toBeChecked();
+    fireEvent.click(setting);
+    expect(saved().showRowHints).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(document.querySelector('.row-pill')).not.toBeInTheDocument();
+    expect(document.querySelector('.active-row')).not.toBeInTheDocument();
+    expect(document.querySelector('.active-row-label')).not.toBeInTheDocument();
+    expect(screen.getByTestId('pixel-grid')).not.toHaveAccessibleName(/Row /);
+    expect(document.querySelector('.row-label')).toBeVisible();
+    view.unmount();
+    view = render(<App />);
+    openFish();
+    expect(saved().attempts.fish).toEqual(before);
+    expect(document.querySelector('.row-pill')).not.toBeInTheDocument();
+    enter(firstAnswer());
+    submit();
+    expect(screen.getByText('Correct! You revealed a pixel.')).toBeVisible();
+    expect(screen.queryByText(/Pixel revealed:/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Language: Čeština/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Nastavení' }));
+    const translated = screen.getByRole('checkbox', {
+      name: 'Zobrazovat nápovědu řádku',
+    });
+    expect(translated).not.toBeChecked();
+    fireEvent.click(translated);
+    fireEvent.click(screen.getByRole('button', { name: 'Zavřít' }));
+    expect(document.querySelector('.row-pill')).toBeVisible();
+    expect(document.querySelector('.active-row')).toBeVisible();
+    view.unmount();
+  });
+  it('closes settings by clicking the backdrop, but not inside the dialog', () => {
+    render(<App />);
+    const settingsButton = screen.getByRole('button', { name: 'Settings' });
+    fireEvent.click(settingsButton);
+    const dialog = screen.getByRole('dialog', { name: 'Settings' });
+    vi.spyOn(dialog, 'getBoundingClientRect').mockReturnValue(
+      DOMRect.fromRect({ x: 100, y: 100, width: 300, height: 400 }),
+    );
+    const inside = { clientX: 110, clientY: 110 };
+    fireEvent.mouseDown(dialog, inside);
+    fireEvent.click(dialog, inside);
+    fireEvent.mouseDown(dialog, inside);
+    fireEvent.click(dialog, { clientX: 10, clientY: 10 });
+    expect(dialog).toBeInTheDocument();
+    const outside = { clientX: 10, clientY: 10 };
+    fireEvent.mouseDown(dialog, outside);
+    fireEvent.click(dialog, outside);
+    expect(
+      screen.queryByRole('dialog', { name: 'Settings' }),
+    ).not.toBeInTheDocument();
+    expect(settingsButton).toHaveFocus();
+  });
+  it('keeps settings focus when a deferred exercise finishes its feedback', () => {
+    vi.useFakeTimers();
+    render(<App />);
+    openFish();
+    enter(firstAnswer() === '1' ? '2' : '1');
+    submit();
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    const setting = screen.getByRole('checkbox', { name: 'Show row hints' });
+    act(() => setting.focus());
+    act(() => vi.advanceTimersByTime(900));
+    expect(setting).toHaveFocus();
+  });
+  it.each(['en', 'cs'] as const)(
+    'separates labeled help and settings and restores their focus in %s',
+    (language) => {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify(emptyProgress(language)),
+      );
+      pwa.waiting = true;
+      const t = messages[language];
+      render(<App />);
+      const helpButton = screen.getByRole('button', {
+        name: t.help,
+      });
+      const settingsButton = screen.getByRole('button', {
+        name: t.settings,
+      });
+      expect(helpButton).toHaveTextContent(t.help);
+      expect(settingsButton).toHaveTextContent(t.settings);
+      fireEvent.click(helpButton);
+      const help = within(screen.getByRole('dialog', { name: t.help }));
+      expect(help.getByText(t.howBody)).toBeVisible();
+      expect(help.getByText(t.installBody)).toBeVisible();
+      expect(help.getByText(t.offlineHelp)).toBeVisible();
+      expect(help.queryByRole('checkbox')).not.toBeInTheDocument();
+      expect(help.queryByRole('combobox')).not.toBeInTheDocument();
+      expect(
+        help.queryByRole('button', { name: t.resetAll }),
+      ).not.toBeInTheDocument();
+      expect(
+        help.queryByRole('button', { name: t.update }),
+      ).not.toBeInTheDocument();
+      fireEvent.click(help.getByRole('button', { name: t.close }));
+      expect(helpButton).toHaveFocus();
+      fireEvent.click(settingsButton);
+      const settings = within(screen.getByRole('dialog', { name: t.settings }));
+      expect(settings.getByRole('combobox', { name: t.language })).toHaveValue(
+        language,
+      );
+      expect(
+        settings.getByRole('checkbox', { name: t.showRowHints }),
+      ).toBeChecked();
+      expect(settings.getByRole('button', { name: t.resetAll })).toBeVisible();
+      expect(settings.getByRole('button', { name: t.update })).toBeVisible();
+      expect(settings.queryByText(t.howBody)).not.toBeInTheDocument();
+      expect(settings.queryByText(t.installBody)).not.toBeInTheDocument();
+      fireEvent.click(settings.getByRole('button', { name: t.close }));
+      expect(settingsButton).toHaveFocus();
+    },
+  );
+  it('keeps local-data permission controls in settings, not help', async () => {
+    const persist = vi.fn().mockResolvedValue(false);
+    vi.stubGlobal('navigator', {
+      languages: ['en'],
+      storage: { persist },
+    });
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Help' }));
+    expect(
+      screen.queryByRole('button', { name: 'Ask to keep local data' }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Ask to keep local data' }),
+      );
+    });
+    expect(persist).toHaveBeenCalledOnce();
+    expect(screen.getByText(messages.en.notPersisted)).toBeVisible();
+  });
+});
+
+describe('pixel game', () => {
+  it('normalizes two digits and defers range/wrong answers without filling pixels', () => {
+    vi.useFakeTimers();
+    render(<App />);
+    openFish();
+    expect(screen.getByRole('button', { name: 'Check' })).toBeDisabled();
+    enter('009');
+    expect(screen.getByRole('textbox')).toHaveValue('0');
+    submit();
+    expect(screen.getByText(messages.en.range)).toBeVisible();
+    expect(screen.getByRole('textbox')).toHaveAttribute('readonly');
+    expect(screen.getByRole('button', { name: 'Check' })).toBeDisabled();
+    act(() => vi.advanceTimersByTime(900));
+    expect(screen.getByRole('textbox')).toHaveValue('');
+    enter('99');
+    submit();
+    expect(saved().attempts.fish!.solved).toEqual([]);
+    act(() => vi.advanceTimersByTime(900));
+    enter(firstAnswer() === '1' ? '2' : '1');
+    submit();
+    expect(screen.getByText(messages.en.retry)).toBeVisible();
+    expect(saved().attempts.fish!.solved).toEqual([]);
+    act(() => vi.advanceTimersByTime(900));
+    expect(screen.getByRole('textbox')).toHaveFocus();
+  });
+  it('defers a missed pixel once, resumes the next exercise, and returns after the others', () => {
+    vi.useFakeTimers();
+    const progress = emptyProgress('en');
+    const attempt = createAttempt(puzzles[0]!, () => 0.2);
+    attempt.solved = attempt.queue.slice(0, -3).map(({ pixelId }) => pixelId);
+    progress.attempts.fish = attempt;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
+    const missed = currentExercise(attempt)!;
+    let view = render(<App />);
+    openFish();
+    enter(missed.equation.c === 1 ? '2' : '1');
+    submit();
+    const deferred = saved().attempts.fish!;
+    expect(deferred.solved).toEqual(attempt.solved);
+    expect(deferred.queue.at(-1)).toEqual(missed);
+    expect(currentExercise(deferred)!.pixelId).not.toBe(missed.pixelId);
+    submit();
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+    expect(saved().attempts.fish).toEqual(deferred);
+    view.unmount();
+    view = render(<App />);
+    openFish();
+    expect(saved().attempts.fish).toEqual(deferred);
+    expect(screen.getByRole('textbox')).toHaveValue('');
+    for (let index = 0; index < 2; index += 1) {
+      enter(firstAnswer());
+      submit();
+      act(() => vi.advanceTimersByTime(650));
+    }
+    expect(currentExercise(saved().attempts.fish!)).toEqual(missed);
+    expect(screen.getByTestId(`cell-${missed.pixelId}`)).toHaveAttribute(
+      'data-filled',
+      'false',
+    );
+    enter(firstAnswer());
+    submit();
+    expect(
+      screen.getByRole('heading', { name: 'You finished the picture!' }),
+    ).toBeVisible();
+    view.unmount();
+  });
+  it('inserts practice after missing the final pixel without revealing or completing it', () => {
+    vi.useFakeTimers();
+    const progress = emptyProgress('en');
+    const attempt = createAttempt(puzzles[0]!, () => 0.2);
+    attempt.solved = attempt.queue.slice(0, -1).map(({ pixelId }) => pixelId);
+    progress.attempts.fish = attempt;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
+    render(<App />);
+    openFish();
+    const last = currentExercise(attempt)!;
+    enter(last.equation.c === 1 ? '2' : '1');
+    submit();
+    act(() => vi.advanceTimersByTime(900));
+    expect(screen.getByText('PRACTICE')).toBeVisible();
+    expect(document.querySelector('.row-pill')).not.toBeInTheDocument();
+    expect(document.querySelector('.active-row')).not.toBeInTheDocument();
+    expect(saved().attempts.fish!.solved).toEqual(attempt.solved);
+    const review = currentExercise(saved().attempts.fish!)!;
+    enter(review.equation.c === 1 ? '2' : '1');
+    submit();
+    act(() => vi.advanceTimersByTime(900));
+    expect(currentExercise(saved().attempts.fish!)!.pixelId).not.toBe(
+      review.pixelId,
+    );
+    enter(firstAnswer());
+    submit();
+    expect(screen.getByText(messages.en.practiceCorrect)).toBeVisible();
+    expect(document.querySelector('.new-pixel')).not.toBeInTheDocument();
+    expect(saved().attempts.fish!.solved).toEqual(attempt.solved);
+    expect(saved().completed).toEqual([]);
+    act(() => vi.advanceTimersByTime(650));
+    expect(currentExercise(saved().attempts.fish!)).toEqual(last);
+    expect(document.querySelector('.row-pill')).toBeVisible();
+    enter(firstAnswer());
+    submit();
+    expect(saved().completed).toEqual(['fish']);
+  });
+  it('saves and fills exactly the answer coordinate before animation, with repeat protection', () => {
+    vi.useFakeTimers();
+    render(<App />);
+    openFish();
+    const before = saved().attempts.fish!;
+    const expected = before.queue[0]!;
+    const displayedEquation = screen.getByTestId('equation').textContent;
+    enter(firstAnswer());
+    submit();
+    submit();
+    fireEvent.keyDown(screen.getByRole('textbox'), {
+      key: 'Enter',
+      repeat: true,
+    });
+    expect(saved().attempts.fish!.solved).toEqual([expected.pixelId]);
+    expect(screen.getByTestId(`cell-${expected.pixelId}`)).toHaveAttribute(
+      'data-filled',
+      'true',
+    );
+    expect(document.querySelectorAll('[data-filled="true"]')).toHaveLength(1);
+    expect(screen.getByTestId('equation').textContent).toBe(displayedEquation);
+    expect(screen.getByRole('textbox')).toHaveValue(
+      String(expected.equation.c),
+    );
+    expect(screen.getByText(/Correct! You revealed a pixel\./)).toHaveAttribute(
+      'class',
+      'feedback positive',
+    );
+    act(() => vi.advanceTimersByTime(650));
+    expect(screen.getByRole('textbox')).toHaveFocus();
+    expect(screen.getByRole('textbox')).toHaveValue('');
+    expect(saved().attempts.fish!.queue).toEqual(before.queue);
+  });
+  it('supports keypad, erase, and physical keyboard while a keypad button has focus', () => {
+    render(<App />);
+    openFish();
+    fireEvent.click(screen.getByRole('button', { name: '1' }));
+    fireEvent.click(screen.getByRole('button', { name: '0' }));
+    expect(screen.getByRole('textbox')).toHaveValue('10');
+    fireEvent.click(screen.getByRole('button', { name: 'Erase last digit' }));
+    expect(screen.getByRole('textbox')).toHaveValue('1');
+    fireEvent.keyDown(screen.getByRole('button', { name: '1' }), {
+      key: 'Backspace',
+    });
+    for (const key of firstAnswer())
+      fireEvent.keyDown(screen.getByRole('button', { name: '1' }), { key });
+    fireEvent.keyDown(screen.getByRole('button', { name: '1' }), {
+      key: 'Enter',
+    });
+    expect(saved().attempts.fish!.solved).toHaveLength(1);
+  });
+  it('keeps background and unsolved targets visually indistinguishable', () => {
+    render(<App />);
+    openFish();
+    const target = puzzles[0]!.pixels[0]!;
+    const targetCell = screen.getByTestId(`cell-${target.id}`);
+    const backgroundCell = screen.getByTestId(`${'cell-'}${target.row}:1`);
+    expect(targetCell.className).toBe(backgroundCell.className);
+    expect(targetCell.getAttribute('style')).toBe(
+      backgroundCell.getAttribute('style'),
+    );
+    expect(
+      screen.getByTestId('pixel-grid').querySelectorAll('button'),
+    ).toHaveLength(0);
+  });
+  it('preserves queue on navigation/reload and restarts only after confirmation', () => {
+    render(<App />);
+    openFish();
+    enter(firstAnswer());
+    submit();
+    const before = saved();
+    fireEvent.click(screen.getByRole('button', { name: 'My pictures' }));
+    openFish();
+    expect(saved()).toEqual(before);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Restart this picture' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(saved()).toEqual(before);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Restart this picture' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Start over' }));
+    expect(saved().attempts.fish!.solved).toEqual([]);
+  });
+  it('finishes the final pixel, focuses celebration, and replays with retained badge', () => {
+    const progress = emptyProgress('en');
+    const attempt = createAttempt(puzzles[0]!, () => 0.2);
+    attempt.solved = attempt.queue.slice(0, -1).map((entry) => entry.pixelId);
+    progress.attempts.fish = attempt;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
+    render(<App />);
+    openFish();
+    enter(firstAnswer());
+    submit();
+    expect(
+      screen.getByRole('heading', { name: 'You finished the picture!' }),
+    ).toHaveFocus();
+    expect(saved().completed).toEqual(['fish']);
+    expect(document.querySelector('.completion-check')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'My pictures' }));
+    expect(
+      screen.getByRole('region', { name: messages.en.galleryTitle }),
+    ).toBeVisible();
+    const fishCard = screen.getByRole('button', { name: /Fish/ });
+    expect(fishCard.querySelector('.discovery-badge')).not.toBeInTheDocument();
+    expect(fishCard.querySelector('.card-action-icon path')).toHaveAttribute(
+      'd',
+      'm5 12 4 4L19 6',
+    );
+    fireEvent.click(fishCard);
+    fireEvent.click(screen.getByRole('button', { name: 'Play again' }));
+    expect(saved().attempts.fish!.solved).toEqual([]);
+    expect(saved().completed).toEqual(['fish']);
+  });
+});
+
+describe('visible persistence and PWA failures', () => {
+  it('reports corrupt progress while retaining independent valid data', () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        ...emptyProgress('cs'),
+        attempts: { fish: {} },
+        completed: ['cat'],
+      }),
+    );
+    render(<App />);
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Některá data nešla přečíst',
+    );
+    expect(screen.getByText(new RegExp(`1 / ${puzzles.length}`))).toBeVisible();
+  });
+  it('allows in-memory play but does not claim saving after quota failure', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('Full', 'QuotaExceededError');
+    });
+    render(<App />);
+    openFish();
+    const equation = screen.getByTestId('equation').textContent!.split(' ');
+    enter(
+      String(
+        equation[1] === '+'
+          ? Number(equation[0]) + Number(equation[2])
+          : Number(equation[0]) - Number(equation[2]),
+      ),
+    );
+    submit();
+    expect(document.querySelectorAll('[data-filled="true"]')).toHaveLength(1);
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Progress cannot be saved',
+    );
+    expect(
+      screen.queryByText('Progress saved in this browser'),
+    ).not.toBeInTheDocument();
+  });
+  it('handles denied localStorage access and blocks updates that cannot save', () => {
+    vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
+      throw new DOMException('Denied', 'SecurityError');
+    });
+    pwa.waiting = true;
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Save & update' }));
+    expect(pwa.acceptUpdate).not.toHaveBeenCalled();
+    expect(screen.getByText(/The update was not applied/)).toBeVisible();
+  });
+  it('never accepts an update until requested, and supports deferral to settings', () => {
+    pwa.waiting = true;
+    pwa.ready = true;
+    render(<App />);
+    openFish();
+    expect(screen.getByText('Ready for offline play')).toBeVisible();
+    expect(pwa.acceptUpdate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Later' }));
+    expect(
+      screen.queryByRole('button', { name: 'Save & update' }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save & update' }));
+    expect(pwa.acceptUpdate).toHaveBeenCalledOnce();
+    expect(saved().attempts.fish).toBeDefined();
+  });
+  it('shows cache failures with a retry control', () => {
+    pwa.error = true;
+    render(<App />);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Retry offline setup' }),
+    );
+    expect(pwa.retry).toHaveBeenCalled();
+  });
+});
+
+describe('exercise settings', () => {
+  function chooseCrossingTo12() {
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(screen.getByRole('combobox', { name: 'Exercise type' })).toHaveValue(
+      'picture',
+    );
+    expect(
+      screen.queryByRole('combobox', { name: 'Numbers up to' }),
+    ).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Exercise type' }), {
+      target: { value: 'crossing' },
+    });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Numbers up to' }), {
+      target: { value: '12' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+  }
+
+  it('fine-tunes a preset, locks wider pictures and starts sums within it', () => {
+    render(<App />);
+    chooseCrossingTo12();
+    expect(saved().exercises).toEqual({
+      maxNumber: 12,
+      crossTen: true,
+      operations: 'both',
+    });
+    expect(
+      screen.getByText('Exercises: Crossing ten · Numbers up to 12'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', {
+        name: /Dog/,
+      }),
+    ).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: /Cat/ }));
+    const attempt = saved().attempts.cat!;
+    expect(attempt.rules).toEqual(saved().exercises);
+    for (const { equation } of attempt.queue) {
+      expect(equation.a).toBeLessThanOrEqual(12);
+      expect(equation.c).toBeLessThanOrEqual(12);
+      expect(equation.op2).toBeUndefined();
+    }
+    expect(
+      screen.getByText('Crossing ten · Numbers up to 12'),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps pictures in progress and switches operations or back to picture mode', () => {
+    render(<App />);
+    openFish();
+    const fishQueue = saved().attempts.fish!.queue;
+    fireEvent.click(screen.getByRole('button', { name: 'My pictures' }));
+    chooseCrossingTo12();
+    expect(saved().attempts.fish!.queue).toEqual(fishQueue);
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Sums' }), {
+      target: { value: 'subtract' },
+    });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Sums' }), {
+      target: { value: 'invalid' },
+    });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Exercise type' }), {
+      target: { value: 'noCrossing' },
+    });
+    expect(saved().exercises).toEqual({
+      maxNumber: 12,
+      crossTen: false,
+      operations: 'subtract',
+    });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Exercise type' }), {
+      target: { value: 'picture' },
+    });
+    expect(saved().exercises).toBe('picture');
+  });
+
+  it('disables restart and replay when a picture needs larger numbers', () => {
+    const dog = puzzles.find(({ id }) => id === 'dog')!;
+    const owl = puzzles.find(({ id }) => id === 'owl')!;
+    const done = createAttempt(dog, () => 0.4);
+    const progress: Progress = {
+      ...emptyProgress('en'),
+      exercises: { maxNumber: 10, crossTen: false, operations: 'both' },
+      attempts: {
+        dog: { ...done, solved: done.queue.map(({ pixelId }) => pixelId) },
+        owl: createAttempt(owl, () => 0.4),
+      },
+      completed: ['dog'],
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: /Owl/ }));
+    expect(screen.getByText('Standard')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Restart this picture' }),
+    ).toBeDisabled();
+    expect(screen.getByText('Requires numbers up to 12')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'My pictures' }));
+    fireEvent.click(screen.getByRole('button', { name: /Dog/ }));
+    expect(screen.getByRole('button', { name: 'Play again' })).toBeDisabled();
+    expect(screen.getByText('Requires numbers up to 13')).toBeInTheDocument();
+  });
+
+  it('uses Czech labels', () => {
+    vi.spyOn(navigator, 'languages', 'get').mockReturnValue(['cs-CZ']);
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Nastavení' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Druh příkladů' }), {
+      target: { value: 'crossing' },
+    });
+    expect(screen.getByRole('combobox', { name: 'Čísla do' })).toHaveValue(
+      '20',
+    );
+    expect(
+      screen.getByRole('option', { name: 'S přechodem přes desítku' }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe('arithmetic mode switch', () => {
+  it('keeps addition and multiplication progress separate and restores saved products', () => {
+    const view = render(<App />);
+    openFish();
+    const addition = saved().attempts.fish;
+    fireEvent.click(screen.getByRole('button', { name: 'Multiplication' }));
+    expect(screen.getByRole('button', { name: 'Multiplication' }))
+      .toHaveAttribute('aria-pressed', 'true');
+    openFish();
+    const key = `${STORAGE_KEY}.multiplication`;
+    const multiply: Progress = JSON.parse(localStorage.getItem(key)!);
+    expect(multiply.attempts.fish!.queue.every(({ equation }) => equation.op === '×')).toBe(true);
+    expect(saved().attempts.fish).toEqual(addition);
+    enter(String(currentExercise(multiply.attempts.fish!)!.equation.c));
+    submit();
+    const solved: Progress = JSON.parse(localStorage.getItem(key)!);
+    expect(solved.attempts.fish!.solved).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Addition / subtraction' }));
+    openFish();
+    expect(saved().attempts.fish).toEqual(addition);
+    view.unmount();
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Multiplication' }));
+    openFish();
+    expect(JSON.parse(localStorage.getItem(key)!).attempts.fish).toEqual(solved.attempts.fish);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+});
+
+
+it('accepts 10 × 10 = 100 through the multiplication answer field', () => {
+  const progress = emptyProgress('en');
+  const attempt = createAttempt(puzzles[0]!, () => 0.4, undefined, true);
+  attempt.queue[0]!.equation = { a: 10, op: '×', b: 10, c: 100 };
+  progress.attempts.fish = attempt;
+  const key = `${STORAGE_KEY}.multiplication`;
+  localStorage.setItem(key, JSON.stringify(progress));
+  render(<App />);
+  fireEvent.click(screen.getByRole('button', { name: 'Multiplication' }));
+  openFish();
+  expect(screen.getByTestId('equation')).toHaveTextContent('10 × 10');
+  expect(screen.getByRole('textbox', { name: 'Your answer' })).toHaveAttribute('maxlength', '3');
+  enter('100');
+  submit();
+  expect(JSON.parse(localStorage.getItem(key)!).attempts.fish.solved).toHaveLength(1);
+});

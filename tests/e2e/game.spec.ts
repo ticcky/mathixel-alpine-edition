@@ -1,0 +1,564 @@
+import { expect } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+import type { Progress } from '../../src/storage/progress';
+import { createAttempt, currentExercise } from '../../src/domain/game';
+import { puzzles } from '../../src/content/animals';
+import { emptyProgress, STORAGE_KEY } from '../../src/storage/progress';
+import { messages } from '../../src/i18n';
+import {
+  analyticsEndpoint,
+  analyticsExpected,
+  answerEquation,
+  test,
+} from './helpers';
+
+async function saved(page: Page): Promise<Progress> {
+  return page.evaluate(() =>
+    JSON.parse(localStorage.getItem('mathogram.progress')!),
+  );
+}
+
+test('browser Back returns to the gallery and Forward resumes the picture', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /Fish/ }).click();
+  await answerEquation(page);
+  const progress = await saved(page);
+  await page.getByRole('button', { name: messages.en.settings }).click();
+  await page.goBack();
+  await expect(
+    page.getByRole('heading', { name: messages.en.galleryTitle }),
+  ).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(await saved(page)).toEqual(progress);
+  await page.goForward();
+  await expect(
+    page.getByRole('heading', { name: messages.en.fish }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('textbox', { name: messages.en.answer }),
+  ).toHaveValue('');
+  expect(await saved(page)).toEqual(progress);
+  await page.getByRole('button', { name: messages.en.gallery }).click();
+  await page.getByRole('button', { name: /Cat/ }).click();
+  await page.goBack();
+  await expect(
+    page.getByRole('heading', { name: messages.en.galleryTitle }),
+  ).toBeVisible();
+});
+
+test('browser Back returns from completed pictures and replay adds no extra step', async ({
+  page,
+}) => {
+  const progress = emptyProgress('en');
+  const fish = puzzles.find((puzzle) => puzzle.id === 'fish')!;
+  const attempt = createAttempt(fish);
+  attempt.solved = attempt.queue.map((entry) => entry.pixelId);
+  progress.attempts.fish = attempt;
+  progress.completed = ['fish'];
+  await page.addInitScript(
+    ({ key, value }) => localStorage.setItem(key, value),
+    { key: STORAGE_KEY, value: JSON.stringify(progress) },
+  );
+  await page.goto('/');
+  await page.getByRole('button', { name: /Fish/ }).click();
+  await expect(
+    page.getByRole('heading', { name: messages.en.completeTitle }),
+  ).toBeVisible();
+  await page.goBack();
+  await expect(
+    page.getByRole('heading', { name: messages.en.galleryTitle }),
+  ).toBeVisible();
+  await page.goForward();
+  await page.getByRole('button', { name: messages.en.replay }).click();
+  await expect(
+    page.getByRole('heading', { name: messages.en.fish }),
+  ).toBeVisible();
+  await page.goBack();
+  await expect(
+    page.getByRole('heading', { name: messages.en.galleryTitle }),
+  ).toBeVisible();
+});
+
+for (const showRowHints of [true, false]) {
+  test(`white pixels stay distinct after revealing and resuming (hints ${showRowHints})`, async ({
+    page,
+  }) => {
+    const puzzle = puzzles.find(({ id }) => id === 'rocket')!;
+    const white = puzzle.pixels.find(({ color }) => color === 'W')!;
+    const attempt = createAttempt(puzzle);
+    const first = attempt.queue.findIndex(
+      ({ pixelId }) => pixelId === white.id,
+    );
+    [attempt.queue[0], attempt.queue[first]] = [
+      attempt.queue[first]!,
+      attempt.queue[0]!,
+    ];
+    const next = attempt.queue.findIndex(
+      ({ pixelId }, index) => index > 0 && pixelId.startsWith(`${white.row}:`),
+    );
+    [attempt.queue[1], attempt.queue[next]] = [
+      attempt.queue[next]!,
+      attempt.queue[1]!,
+    ];
+    const progress = {
+      ...emptyProgress('en'),
+      showRowHints,
+      attempts: { [puzzle.id]: attempt },
+    };
+    await page.setViewportSize({ width: 320, height: 740 });
+    await page.goto('./');
+    await page.evaluate(
+      ({ key, progress }) =>
+        localStorage.setItem(key, JSON.stringify(progress)),
+      { key: STORAGE_KEY, progress },
+    );
+    await page.reload();
+    await page.getByRole('button', { name: /Rocket/ }).click();
+    const cell = page.getByTestId(`cell-${white.id}`);
+    const empty = page.getByTestId('cell-1:1');
+    const blankColor = await empty.evaluate(
+      (element) => getComputedStyle(element).backgroundColor,
+    );
+    await expect(cell).toHaveCSS('background-color', blankColor);
+    const blankColors = await page
+      .locator('.grid-cell')
+      .evaluateAll((cells) => [
+        ...new Set(
+          cells.map((element) => getComputedStyle(element).backgroundColor),
+        ),
+      ]);
+    expect(blankColors).toEqual([blankColor]);
+    await answerEquation(page);
+    await expect(page.locator('.new-pixel')).toHaveCount(0);
+    for (const width of [320, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(cell).toHaveAttribute('data-filled', 'true');
+      await expect(cell).not.toHaveCSS('background-color', blankColor);
+      await expect(cell).toHaveCSS(
+        'box-shadow',
+        'rgb(99, 113, 108) 0px 0px 0px 1px inset',
+      );
+    }
+    await page.reload();
+    await page.getByRole('button', { name: /Rocket/ }).click();
+    await expect(cell).toHaveAttribute('data-filled', 'true');
+    await expect(cell).not.toHaveCSS('background-color', blankColor);
+    await expect(cell).toHaveCSS(
+      'box-shadow',
+      'rgb(99, 113, 108) 0px 0px 0px 1px inset',
+    );
+    await expect(empty).toHaveCSS('box-shadow', 'none');
+  });
+}
+
+for (const [id, name] of [
+  ['cheetah', 'Cheetah'],
+  ['german-shepherd', 'German shepherd'],
+  ['ferrari', 'Ferrari sports car'],
+] as const) {
+  test(`${name} has three-number sums that fit a narrow phone and resume`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 320, height: 740 });
+    await page.goto('./');
+    await page.getByRole('button', { name: new RegExp(name) }).click();
+    await expect(page.getByText(messages.en.advanced)).toBeVisible();
+    await expect(page.getByTestId('equation')).toHaveText(
+      /^\d+ [+−] \d+ [+−] \d+$/,
+    );
+    const attempt = (await saved(page)).attempts[id]!;
+    expect(attempt.queue.length).toBeGreaterThan(100);
+    const exercise = currentExercise(attempt)!;
+    await answerEquation(page, true);
+    await expect(page.getByTestId(`cell-${exercise.pixelId}`)).toHaveAttribute(
+      'data-filled',
+      'true',
+    );
+    await page.reload();
+    await page.getByRole('button', { name: new RegExp(name) }).click();
+    const resumed = (await saved(page)).attempts[id]!;
+    expect(resumed.queue).toEqual(attempt.queue);
+    expect(resumed.solved).toEqual([exercise.pixelId]);
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth,
+    );
+    expect(overflow).toBe(false);
+    const sum = await page.getByTestId('equation').boundingBox();
+    const input = await page.getByRole('textbox').boundingBox();
+    expect(sum!.x).toBeGreaterThanOrEqual(0);
+    expect(input!.x + input!.width).toBeLessThanOrEqual(320);
+    const results = await new AxeBuilder({ page })
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
+      .analyze();
+    expect(results.violations).toEqual([]);
+  });
+}
+
+test('complete introductory animal, retry, repeat guard, reload, resume and replay', async ({
+  page,
+}) => {
+  await page.goto('./');
+  await page.getByRole('button', { name: /Fish/ }).click();
+  const initial = (await saved(page)).attempts.fish!;
+  await page.getByRole('textbox').fill('99');
+  await page.getByRole('button', { name: 'Check', exact: true }).click();
+  await expect(
+    page.getByRole('status').filter({ hasText: messages.en.range }),
+  ).toBeVisible();
+  const afterRange = (await saved(page)).attempts.fish!;
+  expect(afterRange.solved).toEqual([]);
+  expect(afterRange.queue.at(-1)).toEqual(initial.queue[0]);
+  const missed = currentExercise(afterRange)!;
+  await expect(page.getByRole('textbox')).toBeEditable();
+  await page.getByRole('textbox').fill(missed.equation.c === 1 ? '2' : '1');
+  await page.getByRole('textbox').press('Enter');
+  await expect(page.getByText(messages.en.retry)).toBeVisible();
+  const deferred = (await saved(page)).attempts.fish!;
+  expect(deferred.solved).toEqual([]);
+  expect(deferred.queue.at(-1)).toEqual(missed);
+  const next = currentExercise(deferred)!;
+  expect(next.pixelId).not.toBe(missed.pixelId);
+  await answerEquation(page, true);
+  await page.keyboard.press('Enter');
+  expect((await saved(page)).attempts.fish!.solved).toHaveLength(1);
+  await expect(page.getByTestId(`cell-${next.pixelId}`)).toHaveAttribute(
+    'data-filled',
+    'true',
+  );
+  await page.reload();
+  await page.getByRole('button', { name: /Fish/ }).click();
+  expect((await saved(page)).attempts.fish!.queue).toEqual(deferred.queue);
+  expect((await saved(page)).attempts.fish!.solved).toHaveLength(1);
+  for (let index = 1; index < initial.queue.length; index++)
+    await answerEquation(page, index % 2 === 0);
+  await expect(
+    page.getByRole('heading', { name: 'You finished the picture!' }),
+  ).toBeFocused();
+  expect((await saved(page)).completed).toContain('fish');
+  await page.getByRole('button', { name: 'Play again' }).click();
+  expect((await saved(page)).attempts.fish!.solved).toEqual([]);
+  expect((await saved(page)).completed).toContain('fish');
+});
+
+test('settings close when clicking outside the dialog', async ({ page }) => {
+  await page.goto('./');
+  const settingsButton = page.getByRole('button', { name: 'Settings' });
+  await settingsButton.click();
+  const dialog = page.getByRole('dialog', { name: 'Settings' });
+  await expect(dialog).toBeVisible();
+  const box = (await dialog.boundingBox())!;
+  await page.mouse.click(box.x + 4, box.y + 4);
+  await expect(dialog).toBeVisible();
+  await page.mouse.click(2, 2);
+  await expect(dialog).toBeHidden();
+  await expect(settingsButton).toBeFocused();
+});
+
+test('row hints are optional, accessible, translated and remembered after reopening', async ({
+  page,
+}) => {
+  await page.goto('./');
+  await page.getByRole('button', { name: /Fish/ }).click();
+  await expect(page.locator('.row-pill')).toBeVisible();
+  await page.getByRole('button', { name: 'Settings' }).click();
+  const hints = page.getByRole('checkbox', { name: 'Show row hints' });
+  await expect(hints).toBeChecked();
+  const label = hints.locator('..');
+  expect((await label.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await hints.uncheck();
+  const results = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
+    .analyze();
+  expect(results.violations).toEqual([]);
+  await page.getByRole('button', { name: 'Close' }).click();
+  await expect(
+    page.locator('.row-pill, .active-row, .active-row-label'),
+  ).toHaveCount(0);
+  await expect(page.getByTestId('pixel-grid')).not.toHaveAccessibleName(/Row /);
+  await answerEquation(page);
+  await page.reload();
+  await page.getByRole('button', { name: /Fish/ }).click();
+  await expect(
+    page.locator('.row-pill, .active-row, .active-row-label'),
+  ).toHaveCount(0);
+  expect((await saved(page)).showRowHints).toBe(false);
+  await page.getByRole('button', { name: /Language: Čeština/ }).click();
+  await page.getByRole('button', { name: 'Nastavení' }).click();
+  const translated = page.getByRole('checkbox', {
+    name: 'Zobrazovat nápovědu řádku',
+  });
+  await expect(translated).not.toBeChecked();
+  await translated.check();
+  await page.getByRole('button', { name: 'Zavřít' }).click();
+  await expect(page.locator('.row-pill')).toBeVisible();
+  expect((await saved(page)).showRowHints).toBe(true);
+});
+
+test('last missed pixel returns after a saved practice exercise without filling twice', async ({
+  page,
+}) => {
+  await page.goto('./');
+  await page.getByRole('button', { name: /Fish/ }).click();
+  await page.evaluate(() => {
+    const progress: Progress = JSON.parse(
+      localStorage.getItem('mathogram.progress')!,
+    );
+    const attempt = progress.attempts.fish!;
+    attempt.solved = attempt.queue.slice(0, -1).map(({ pixelId }) => pixelId);
+    localStorage.setItem('mathogram.progress', JSON.stringify(progress));
+  });
+  await page.reload();
+  await page.getByRole('button', { name: /Fish/ }).click();
+  const before = (await saved(page)).attempts.fish!;
+  const last = currentExercise(before)!;
+  await page.getByRole('textbox').fill(last.equation.c === 1 ? '2' : '1');
+  await page.getByRole('textbox').press('Enter');
+  await expect(page.getByText('PRACTICE', { exact: true })).toBeVisible();
+  const practice = (await saved(page)).attempts.fish!;
+  expect(practice.solved).toEqual(before.solved);
+  expect(practice.reviewPixelId).toBeDefined();
+  await page.reload();
+  await page.getByRole('button', { name: /Fish/ }).click();
+  expect((await saved(page)).attempts.fish).toEqual(practice);
+  await expect(page.locator('.row-pill, .active-row')).toHaveCount(0);
+  await answerEquation(page);
+  await expect(page.getByText(messages.en.practiceCorrect)).toBeVisible();
+  expect((await saved(page)).attempts.fish!.solved).toEqual(before.solved);
+  expect((await saved(page)).completed).toEqual([]);
+  await answerEquation(page);
+  await expect(
+    page.getByRole('heading', { name: 'You finished the picture!' }),
+  ).toBeVisible();
+  expect((await saved(page)).attempts.fish!.solved).toHaveLength(
+    before.queue.length,
+  );
+});
+
+test('later animal reveals columns above ten and keeps other attempts on confirmed restart', async ({
+  page,
+}) => {
+  await page.goto('./');
+  await page.getByRole('button', { name: /Fish/ }).click();
+  await answerEquation(page);
+  const fish = (await saved(page)).attempts.fish;
+  await page.getByRole('button', { name: 'My pictures', exact: true }).click();
+  await page.getByRole('button', { name: /Owl/ }).click();
+  let aboveTen = false;
+  const count = (await saved(page)).attempts.owl!.queue.length;
+  for (let index = 0; index < count && !aboveTen; index++) {
+    aboveTen = (await answerEquation(page)) > 10;
+  }
+  expect(aboveTen).toBe(true);
+  const before = (await saved(page)).attempts.owl!;
+  const last = before.solved.at(-1)!;
+  expect(Number(last.split(':')[1])).toBeGreaterThan(10);
+  await expect(page.getByTestId(`cell-${last}`)).toHaveAttribute(
+    'data-filled',
+    'true',
+  );
+  await page.getByRole('button', { name: 'Restart this picture' }).click();
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  expect((await saved(page)).attempts.owl).toEqual(before);
+  await page.getByRole('button', { name: 'Restart this picture' }).click();
+  await page.getByRole('button', { name: 'Start over' }).click();
+  expect((await saved(page)).attempts.owl!.solved).toEqual([]);
+  expect((await saved(page)).attempts.fish).toEqual(fish);
+});
+
+test('Czech detection, translated help, focus trapping, recovery and isolated reset', async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ locale: 'cs-CZ' });
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, 'doNotTrack', { get: () => '1' });
+  });
+  await context.route(analyticsEndpoint, (route) => route.abort());
+  const page = await context.newPage();
+  await page.goto('http://127.0.0.1:4173/');
+  await expect(page.locator('html')).toHaveAttribute('lang', 'cs');
+  await page.evaluate(() => {
+    localStorage.setItem('other-project', 'untouched');
+    localStorage.setItem(
+      'mathogram.progress',
+      JSON.stringify({
+        version: 1,
+        language: 'cs',
+        attempts: { fish: {} },
+        completed: ['cat'],
+      }),
+    );
+  });
+  await page.reload();
+  await expect(page.getByRole('alert')).toContainText(
+    'Některá data nešla přečíst',
+  );
+  await page.getByRole('button', { name: 'Nápověda' }).click();
+  await expect(page.getByRole('dialog', { name: 'Nápověda' })).toBeVisible();
+  await expect(page.getByText(/Otevřít jako webovou aplikaci/)).toBeVisible();
+  await page.getByRole('button', { name: 'Zavřít' }).focus();
+  await page.keyboard.press('Tab');
+  expect(
+    await page
+      .getByRole('dialog')
+      .evaluate((dialog) => dialog.contains(document.activeElement)),
+  ).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button', { name: 'Nápověda' })).toBeFocused();
+  await page.getByRole('button', { name: 'Nastavení' }).click();
+  await expect(page.getByRole('dialog', { name: 'Nastavení' })).toBeVisible();
+  await page
+    .getByRole('button', { name: 'Smazat všechny moje obrázky' })
+    .click();
+  await page.getByRole('button', { name: 'Začít znovu' }).click();
+  expect((await saved(page)).completed).toEqual([]);
+  expect(await page.evaluate(() => localStorage.getItem('other-project'))).toBe(
+    'untouched',
+  );
+  await page.getByRole('button', { name: 'Jazyk: English' }).click();
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await context.close();
+});
+
+for (const [name, width, height] of [
+  ['narrow phone', 320, 568],
+  ['phone portrait', 390, 844],
+  ['phone landscape', 844, 390],
+  ['iPad portrait', 768, 1024],
+  ['iPad landscape', 1024, 768],
+  ['iPad split', 375, 1024],
+] as const) {
+  test(`responsive touch layout and accessibility: ${name}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.goto('./');
+    if (width === 390 || width === 1024)
+      await page.screenshot({
+        path: test.info().outputPath('gallery.png'),
+        fullPage: true,
+      });
+    if (width === 390) {
+      const results = await new AxeBuilder({ page })
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
+        .analyze();
+      expect(results.violations).toEqual([]);
+    }
+    await page.getByRole('button', { name: /Language: Čeština/ }).click();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await page.getByRole('button', { name: /Sova/ }).click();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    const controls = page.locator(
+      '.keypad button, .check-button, .header-actions button, .back-button',
+    );
+    for (const control of await controls.all()) {
+      const box = await control.boundingBox();
+      expect(box!.height).toBeGreaterThanOrEqual(44);
+      expect(box!.width).toBeGreaterThanOrEqual(44);
+    }
+    await page.getByRole('button', { name: '1', exact: true }).click();
+    await page
+      .getByRole('button', { name: 'Ověřit', exact: true })
+      .scrollIntoViewIfNeeded();
+    await expect(
+      page.getByRole('button', { name: 'Ověřit', exact: true }),
+    ).toBeInViewport();
+    if (width === 390 || width === 1024) {
+      const results = await new AxeBuilder({ page })
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
+        .analyze();
+      expect(results.violations).toEqual([]);
+    }
+    for (const name of [messages.cs.settings, messages.cs.help]) {
+      const opener = page.getByRole('button', { name, exact: true });
+      await expect(opener).toHaveText(new RegExp(name));
+      await opener.click();
+      const dialog = page.getByRole('dialog', { name, exact: true });
+      await expect(dialog).toBeVisible();
+      if (name === messages.cs.settings) {
+        await expect(dialog.getByRole('checkbox')).toBeVisible();
+        await expect(dialog.getByText(messages.cs.howBody)).toHaveCount(0);
+      } else {
+        await expect(dialog.getByText(messages.cs.howBody)).toBeVisible();
+        await expect(dialog.getByRole('checkbox')).toHaveCount(0);
+        await expect(
+          dialog.getByRole('button', { name: messages.cs.resetAll }),
+        ).toHaveCount(0);
+      }
+      const bounds = await dialog.boundingBox();
+      expect(bounds!.x).toBeGreaterThanOrEqual(0);
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+      if (width === 390) {
+        const results = await new AxeBuilder({ page })
+          .withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
+          .analyze();
+        expect(results.violations).toEqual([]);
+      }
+      await page.keyboard.press('Escape');
+      await expect(opener).toBeFocused();
+    }
+    await page.screenshot({
+      path: test.info().outputPath(`${name}.png`),
+      fullPage: true,
+    });
+  });
+}
+
+test('production build serves local assets at the domain root without errors', async ({
+  page,
+  request,
+}) => {
+  const errors: string[] = [];
+  const external: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('request', (request) => {
+    if (!request.url().startsWith('http://127.0.0.1:4173/'))
+      external.push(request.url());
+  });
+  await page.goto('./');
+  const manifestURL = await page
+    .locator('link[rel="manifest"]')
+    .getAttribute('href');
+  await expect(page.getByText('Ready for offline play')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save & update' })).toHaveCount(
+    0,
+  );
+  expect(manifestURL).toBe('./manifest.webmanifest');
+  const resolvedManifestURL = new URL(manifestURL!, page.url()).href;
+  const response = await request.get(resolvedManifestURL);
+  const manifest = await response.json();
+  expect(manifest).toMatchObject({
+    id: './',
+    start_url: './',
+    scope: './',
+    display: 'standalone',
+  });
+  for (const icon of manifest.icons) {
+    const response = await request.get(
+      new URL(icon.src, resolvedManifestURL).href,
+    );
+    expect(response.ok()).toBe(true);
+    const png = await response.body();
+    expect(png.readUInt32BE(16)).toBe(Number(icon.sizes.split('x')[0]));
+    expect(png.readUInt32BE(20)).toBe(Number(icon.sizes.split('x')[1]));
+  }
+  const apple = await request.get('/icons/apple-touch-icon.png');
+  expect((await apple.body()).readUInt32BE(16)).toBe(180);
+  const optedOut = await page.evaluate(() => navigator.doNotTrack === '1');
+  expect(external).toEqual(
+    analyticsExpected && !optedOut ? [analyticsEndpoint] : [],
+  );
+  expect(errors).toEqual([]);
+});

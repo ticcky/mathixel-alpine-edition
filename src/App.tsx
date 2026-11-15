@@ -1,0 +1,1076 @@
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { puzzles } from './content/animals';
+import { difficulties, getDifficulty, getSize } from './domain/categories';
+import {
+  createAttempt,
+  currentExercise,
+  deferExercise,
+  fitsRules,
+  isComplete,
+  largestColumn,
+  submitAnswer,
+} from './domain/game';
+import { MAX_LIMIT, MIN_LIMIT } from './domain/arithmetic';
+import type { ArithmeticRules } from './domain/arithmetic';
+import { PixelArt, PixelGrid } from './components/PixelArt';
+import { Modal } from './components/Modal';
+import { detectLanguage, messages } from './i18n';
+import {
+  STORAGE_KEY,
+  emptyProgress,
+  loadProgress,
+  saveProgress,
+  resetAllProgress,
+  resetPuzzle,
+} from './storage/progress';
+import type { Language, LoadResult, Progress } from './storage/progress';
+import type { Puzzle } from './domain/puzzle';
+import { isRecord } from './domain/puzzle';
+import { usePwa } from './pwa/usePwa';
+import {
+  analyticsEnabled,
+  trackDialogOpened,
+  trackPuzzleCompleted,
+  trackPuzzleLeft,
+  trackPuzzleStarted,
+  trackScreen,
+  trackSettingChanged,
+} from './analytics';
+import type { SettingName } from './analytics';
+import { usePuzzleTime } from './usePuzzleTime';
+
+function browserStorage(): Storage | null {
+  try {
+    return window.localStorage;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'SecurityError')
+      return null;
+    throw error;
+  }
+}
+
+function initialProgress(): LoadResult {
+  const language = detectLanguage(navigator.languages ?? [navigator.language]);
+  const storage = browserStorage();
+  return storage
+    ? loadProgress(storage, language)
+    : { progress: emptyProgress(language), notice: 'unavailable' };
+}
+
+const limits = Array.from(
+  { length: MAX_LIMIT - MIN_LIMIT + 1 },
+  (_, index) => MIN_LIMIT + index,
+);
+
+const puzzleGroups = difficulties.map((difficulty) => ({
+  difficulty,
+  puzzles: puzzles
+    .filter((puzzle) => getDifficulty(puzzle) === difficulty)
+    .sort((a, b) => a.pixels.length - b.pixels.length),
+}));
+
+function settingValues(
+  progress: Progress,
+): Partial<Record<SettingName, string | number | boolean>> {
+  const { exercises } = progress;
+  return {
+    language: progress.language,
+    theme: progress.theme,
+    rowHints: progress.showRowHints,
+    ...(exercises === 'picture'
+      ? { exercises: 'picture' }
+      : { exercises: 'custom', ...exercises }),
+  };
+}
+
+const parkPictures = puzzles.filter((puzzle) =>
+  ['rabbit', 'butterfly', 'fish', 'chick-and-pig', 'donut'].includes(puzzle.id),
+);
+
+export function App() {
+  const [multiplication, setMultiplication] = useState(false);
+  const [initial] = useState(initialProgress);
+  const [progress, setProgress] = useState(initial.progress);
+  const progressRef = useRef(progress);
+  const [notice, setNotice] = useState(initial.notice);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [answer, setAnswer] = useState('');
+  const [feedback, setFeedback] = useState<
+    'retry' | 'range' | 'correct' | 'practiceCorrect' | 'retryOnly' | null
+  >(null);
+  const [latest, setLatest] = useState<string>();
+  const [pendingExercise, setPendingExercise] = useState<{
+    exercise: NonNullable<ReturnType<typeof currentExercise>>;
+    review: boolean;
+  }>();
+  const pending = pendingExercise !== undefined;
+  const locked = useRef(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [modal, setModal] = useState<
+    'help' | 'settings' | 'restart' | 'reset' | null
+  >(null);
+  const modalOpen = useRef(false);
+  const trackedScreen = useRef<string | null>(undefined);
+  const trackedSettings = useRef(settingValues(progress));
+  const [persistent, setPersistent] = useState<
+    'persisted' | 'notPersisted' | 'persistError' | null
+  >(null);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
+  const [updateBlocked, setUpdateBlocked] = useState(false);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const answerRef = useRef<HTMLInputElement>(null);
+  const pwa = usePwa();
+  const t = messages[progress.language];
+  const puzzle = puzzles.find((item) => item.id === activeId);
+  const attempt = activeId ? progress.attempts[activeId] : undefined;
+  const complete = attempt ? isComplete(attempt) : false;
+  usePuzzleTime(attempt && !complete && modal === null ? activeId : null);
+  const current =
+    pendingExercise?.exercise ??
+    (attempt ? currentExercise(attempt) : undefined);
+  const reviewing =
+    pendingExercise?.review ?? attempt?.reviewPixelId !== undefined;
+  const activeRow =
+    current && progress.showRowHints && !reviewing
+      ? Number(current.pixelId.split(':')[0])
+      : undefined;
+  const rules: ArithmeticRules | undefined =
+    multiplication || progress.exercises === 'picture' ? undefined : progress.exercises;
+  const canStart = (selected: Puzzle) => fitsRules(selected, rules);
+  const describeRules = ({
+    maxNumber,
+    crossTen,
+    operations,
+  }: ArithmeticRules) =>
+    [
+      crossTen ? t.modeCrossing : t.modeNoCrossing,
+      `${t.numbersUpTo} ${maxNumber}`,
+      ...(operations === 'add'
+        ? [t.operationsAdd]
+        : operations === 'subtract'
+          ? [t.operationsSubtract]
+          : []),
+    ].join(' · ');
+  const standalone =
+    window.matchMedia('(display-mode: standalone)').matches ||
+    ('standalone' in navigator && navigator.standalone === true);
+
+  useEffect(() => {
+    document.documentElement.lang = progress.language;
+  }, [progress.language]);
+  useLayoutEffect(() => {
+    const preference = window.matchMedia('(prefers-color-scheme: dark)');
+    function applyTheme() {
+      const dark =
+        progress.theme === 'dark' ||
+        (progress.theme === 'system' && preference.matches);
+      document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+      document
+        .querySelector('meta[name="theme-color"]')
+        ?.setAttribute('content', dark ? '#1c2528' : '#f5f1e4');
+    }
+    applyTheme();
+    preference.addEventListener?.('change', applyTheme);
+    return () => preference.removeEventListener?.('change', applyTheme);
+  }, [progress.theme]);
+  useEffect(() => {
+    modalOpen.current = modal !== null;
+  }, [modal]);
+  useEffect(() => {
+    if (modal === 'settings' || modal === 'help') trackDialogOpened(modal);
+  }, [modal]);
+  useEffect(() => {
+    const previous = trackedSettings.current;
+    const next = settingValues(progress);
+    trackedSettings.current = next;
+    for (const [setting, value] of Object.entries(next) as [
+      SettingName,
+      string | number | boolean,
+    ][])
+      if (previous[setting] !== value) trackSettingChanged(setting, value);
+  }, [progress]);
+  useEffect(() => {
+    const previous = trackedScreen.current;
+    if (previous === activeId) return;
+    trackedScreen.current = activeId;
+    const left = previous ? progressRef.current.attempts[previous] : undefined;
+    if (previous && left && !isComplete(left))
+      trackPuzzleLeft(previous, left.solved.length, left.queue.length);
+    trackScreen(activeId);
+  }, [activeId]);
+  useEffect(() => {
+    window.history.replaceState({ mathogramPuzzle: null }, '');
+    function restoreScreen(event: PopStateEvent) {
+      const state: unknown = event.state;
+      const id = isRecord(state) ? state.mathogramPuzzle : undefined;
+      clearInteraction();
+      setModal(null);
+      setActiveId(
+        typeof id === 'string' &&
+          puzzles.some((item) => item.id === id) &&
+          progressRef.current.attempts[id]
+          ? id
+          : null,
+      );
+    }
+    window.addEventListener('popstate', restoreScreen);
+    return () => window.removeEventListener('popstate', restoreScreen);
+  }, []);
+  useEffect(() => {
+    if (activeId && !complete)
+      answerRef.current?.focus({ preventScroll: true });
+    else heading.current?.focus({ preventScroll: true });
+  }, [activeId, complete]);
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
+
+  function persist(next: Progress): boolean {
+    const storage = browserStorage();
+    const ok = storage !== null && saveProgress(storage, next, multiplication ? `${STORAGE_KEY}.multiplication` : STORAGE_KEY).ok;
+    if (!ok) setNotice('unavailable');
+    else
+      setNotice((previous) => (previous === 'unavailable' ? null : previous));
+    return ok;
+  }
+  function store(next: Progress) {
+    progressRef.current = next;
+    setProgress(next);
+    return persist(next);
+  }
+  function clearInteraction() {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+    locked.current = false;
+    setPendingExercise(undefined);
+    setAnswer('');
+    setFeedback(null);
+    setLatest(undefined);
+  }
+  function openPuzzle(id: string, replay = false) {
+    const selected = puzzles.find((item) => item.id === id);
+    if (!selected) throw new Error('Unknown puzzle.');
+    const previous = progressRef.current;
+    const startNew = replay || !previous.attempts[id];
+    const chosen =
+      multiplication || previous.exercises === 'picture' ? undefined : previous.exercises;
+    if (startNew && !fitsRules(selected, chosen)) return;
+    clearInteraction();
+    if (startNew) {
+      store({
+        ...previous,
+        attempts: {
+          ...previous.attempts,
+          [id]: createAttempt(selected, Math.random, chosen, multiplication),
+        },
+      });
+      trackPuzzleStarted(id, {
+        replay,
+        exercises: chosen ? 'custom' : 'picture',
+        display: standalone ? 'standalone' : 'browser',
+      });
+    }
+    if (activeId !== id) {
+      if (activeId === null)
+        window.history.pushState({ mathogramPuzzle: id }, '');
+      else window.history.replaceState({ mathogramPuzzle: id }, '');
+    }
+    setActiveId(id);
+  }
+  function goHome() {
+    clearInteraction();
+    window.history.replaceState({ mathogramPuzzle: null }, '');
+    setActiveId(null);
+  }
+  function changeArithmeticMode(next: boolean) {
+    if (next === multiplication) return;
+    const storage = browserStorage();
+    const loaded = storage
+      ? loadProgress(storage, progress.language, next ? `${STORAGE_KEY}.multiplication` : STORAGE_KEY)
+      : { progress: emptyProgress(progress.language), notice: 'unavailable' as const };
+    const nextProgress = { ...loaded.progress, language: progress.language, theme: progress.theme, showRowHints: progress.showRowHints };
+    goHome();
+    setModal(null);
+    setMultiplication(next);
+    progressRef.current = nextProgress;
+    setProgress(nextProgress);
+    setNotice(loaded.notice);
+  }
+  function changeLanguage(language: Language) {
+    store({ ...progressRef.current, language });
+  }
+  function changeExercises(next: Partial<ArithmeticRules> | 'picture') {
+    const previous = progressRef.current;
+    store({
+      ...previous,
+      exercises:
+        next === 'picture'
+          ? 'picture'
+          : {
+              ...(previous.exercises === 'picture'
+                ? { maxNumber: MAX_LIMIT, crossTen: false, operations: 'both' }
+                : previous.exercises),
+              ...next,
+            },
+    });
+  }
+  function editAnswer(value: string) {
+    if (locked.current) return;
+    const digits = value.replace(/[^0-9]/g, '').slice(0, multiplication ? 3 : 2);
+    setAnswer(digits === '' ? '' : String(Number(digits)));
+    setFeedback(null);
+  }
+  function checkAnswer() {
+    if (locked.current || !attempt || !current || !answer || !activeId) return;
+    const answered = submitAnswer(attempt, answer, current.pixelId);
+    const correct = answered !== attempt;
+    const next = correct ? answered : deferExercise(attempt, current.pixelId);
+    const revealed = next.solved.length > attempt.solved.length;
+    locked.current = true;
+    setPendingExercise({ exercise: current, review: reviewing });
+    setFeedback(
+      correct
+        ? revealed
+          ? 'correct'
+          : 'practiceCorrect'
+        : next === attempt
+          ? 'retryOnly'
+          : Number(answer) < 1 || Number(answer) > (multiplication ? 100 : 20)
+            ? 'range'
+            : 'retry',
+    );
+    setLatest(revealed ? current.pixelId : undefined);
+    const previous = progressRef.current;
+    store({
+      ...previous,
+      attempts: { ...previous.attempts, [activeId]: next },
+      completed: isComplete(next)
+        ? [...new Set([...previous.completed, activeId])]
+        : previous.completed,
+    });
+    if (revealed && isComplete(next)) trackPuzzleCompleted(activeId);
+    timer.current = setTimeout(
+      () => {
+        locked.current = false;
+        setPendingExercise(undefined);
+        setAnswer('');
+        setFeedback(null);
+        setLatest(undefined);
+        if (!modalOpen.current)
+          answerRef.current?.focus({ preventScroll: true });
+      },
+      correct ? 650 : 900,
+    );
+  }
+  async function update() {
+    if (!persist(progressRef.current)) {
+      setUpdateBlocked(true);
+      return;
+    }
+    setUpdateBlocked(false);
+    await pwa.acceptUpdate();
+  }
+  async function requestPersistence() {
+    try {
+      const granted = await navigator.storage.persist();
+      setPersistent(granted ? 'persisted' : 'notPersisted');
+    } catch {
+      setPersistent('persistError');
+    }
+  }
+  function confirmReset() {
+    if (modal === 'reset') {
+      store(resetAllProgress(progressRef.current));
+      goHome();
+    } else if (modal === 'restart' && puzzle && canStart(puzzle)) {
+      const next = resetPuzzle(progressRef.current, puzzle.id);
+      progressRef.current = next;
+      openPuzzle(puzzle.id, true);
+    }
+    setModal(null);
+  }
+
+  return (
+    <div className="app-shell">
+      <header className="app-header">
+        <button className="brand" onClick={goHome} aria-label={t.homeLabel}>
+          Mathixel
+        </button>
+        <div className="header-actions">
+          <button
+            className="language-toggle"
+            onClick={() =>
+              changeLanguage(progress.language === 'en' ? 'cs' : 'en')
+            }
+            aria-label={`${progress.language === 'en' ? 'Česky' : 'English'} · ${t.language}: ${progress.language === 'en' ? 'Čeština' : 'English'}`}
+          >
+            {progress.language === 'en' ? 'Česky' : 'English'}
+          </button>
+          <button
+            className="header-tool"
+            onClick={(event) => {
+              event.currentTarget.focus();
+              setModal('settings');
+            }}
+          >
+            <svg
+              className="header-tool-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              aria-hidden="true"
+            >
+              <path d="M4 7h16M4 17h16" />
+              <circle cx="9" cy="7" r="3" fill="var(--tool-bg)" />
+              <circle cx="15" cy="17" r="3" fill="var(--tool-bg)" />
+            </svg>
+            {t.settings}
+          </button>
+          <button
+            className="header-tool"
+            onClick={(event) => {
+              event.currentTarget.focus();
+              setModal('help');
+            }}
+          >
+            <span className="header-tool-icon" aria-hidden="true">
+              ?
+            </span>
+            {t.help}
+          </button>
+        </div>
+      </header>
+
+      <div className="arithmetic-switch" role="group" aria-label={t.arithmeticMode}>
+        <button type="button" aria-pressed={!multiplication} onClick={() => changeArithmeticMode(false)}>{t.additionSubtraction}</button>
+        <button type="button" aria-pressed={multiplication} onClick={() => changeArithmeticMode(true)}>{t.multiplication}</button>
+      </div>
+      {multiplication && <p className="multiplication-hint">{t.multiplicationHelp}</p>}
+
+      {notice && (
+        <div className="notice" role="alert">
+          {t[notice]}
+        </div>
+      )}
+      {pwa.error && (
+        <div className="notice" role="alert">
+          {t.cacheError} <button onClick={pwa.retry}>{t.retryOffline}</button>
+        </div>
+      )}
+      {pwa.waiting && !updateDismissed && (
+        <aside className="update-banner" aria-label={t.updateTitle}>
+          <div>
+            <strong>{t.updateTitle}</strong>
+            <p>{t.updateBody}</p>
+          </div>
+          <div className="button-row">
+            <button
+              className="primary"
+              onClick={() => {
+                void update();
+              }}
+            >
+              {t.update}
+            </button>
+            <button
+              className="secondary"
+              onClick={() => setUpdateDismissed(true)}
+            >
+              {t.later}
+            </button>
+          </div>
+          {updateBlocked && <p role="alert">{t.updateBlocked}</p>}
+        </aside>
+      )}
+
+      <main>
+        {!puzzle || !attempt ? (
+          <section className="gallery" aria-labelledby="gallery-title">
+            <div className="hero">
+              <div className="hero-copy">
+                <h1 id="gallery-title" tabIndex={-1} ref={heading}>
+                  {t.galleryTitle}
+                </h1>
+                <p>{t.galleryIntro}</p>
+                <a className="explore-button" href="#picture-collection">
+                  {t.gallery}
+                  <span aria-hidden="true">
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M12 5v14m-6-6 6 6 6-6" />
+                    </svg>
+                  </span>
+                </a>
+              </div>
+              <div className="hero-landscape" aria-hidden="true">
+                <svg
+                  className="park-island"
+                  viewBox="0 0 600 420"
+                  preserveAspectRatio="none"
+                >
+                  <path d="M320 25C225 25 265 90 170 108C75 126 35 195 35 258C35 330 120 316 180 367C240 417 385 392 455 357C530 320 575 264 565 184C556 112 470 12 320 25Z" />
+                </svg>
+                {parkPictures.map((picture) => (
+                  <div
+                    key={picture.id}
+                    className={`park-creature creature-${picture.id}`}
+                  >
+                    <PixelArt puzzle={picture} />
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="collection-heading" id="picture-collection">
+              <h2>{t.collection}</h2>
+              <span>
+                <span className="collection-check" aria-hidden="true">
+                  ✓
+                </span>
+                {progress.completed.length} / {puzzles.length} {t.friends}
+              </span>
+            </div>
+            {rules && (
+              <p className="exercise-summary">
+                {t.exercisesTitle}: {describeRules(rules)}
+              </p>
+            )}
+            {puzzleGroups.map((group) => (
+              <section
+                className={`difficulty-group difficulty-${group.difficulty}`}
+                key={group.difficulty}
+                aria-labelledby={`difficulty-${group.difficulty}`}
+              >
+                <h2 id={`difficulty-${group.difficulty}`}>
+                  {t[group.difficulty]}
+                </h2>
+                <div className="picture-gallery">
+                  {group.puzzles.map((animal) => {
+                    const saved = progress.attempts[animal.id];
+                    const done = saved && isComplete(saved);
+                    const needsMore = !saved && !canStart(animal);
+                    const action = needsMore
+                      ? `${t.needsNumbers} ${largestColumn(animal)}`
+                      : done
+                        ? t.completed
+                        : saved
+                          ? t.continue
+                          : t.start;
+                    return (
+                      <button
+                        key={animal.id}
+                        className={`picture-card picture-${animal.id}${needsMore ? ' is-locked' : ''}${done ? ' is-done' : ''}`}
+                        onClick={() => openPuzzle(animal.id)}
+                        disabled={needsMore}
+                        aria-describedby={`category-${animal.id}`}
+                      >
+                        <div className="card-art">
+                          <PixelArt puzzle={animal} centered />
+                        </div>
+                        <div className="card-copy">
+                          <h3>{t[animal.name]}</h3>
+                          <span
+                            className="card-level"
+                            id={`category-${animal.id}`}
+                          >
+                            {t[getDifficulty(animal)]} · {t[getSize(animal)]}
+                            <span className="card-exercises">
+                              {animal.pixels.length} {t.exercises}
+                            </span>
+                          </span>
+                          <div className="card-action">
+                            <span
+                              className={
+                                !saved && !needsMore ? 'sr-only' : undefined
+                              }
+                            >
+                              {action}
+                            </span>
+                            <span
+                              className="card-action-icon"
+                              aria-hidden="true"
+                            >
+                              <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                {needsMore ? (
+                                  <>
+                                    <rect
+                                      x="5"
+                                      y="10"
+                                      width="14"
+                                      height="10"
+                                      rx="2"
+                                    />
+                                    <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+                                  </>
+                                ) : done ? (
+                                  <path d="m5 12 4 4L19 6" />
+                                ) : (
+                                  <path d="M5 12h14m-6-6 6 6-6 6" />
+                                )}
+                              </svg>
+                            </span>
+                          </div>
+                          {saved && !done && (
+                            <progress
+                              value={saved.solved.length}
+                              max={animal.pixels.length}
+                              aria-label={`${t[animal.name]}: ${t.filled}`}
+                            />
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
+            <p className="gallery-note">
+              <span aria-hidden="true">♡ </span>
+              {t.gentle}
+            </p>
+          </section>
+        ) : complete ? (
+          <section className="completion" aria-labelledby="complete-title">
+            <div className="game-nav">
+              <button className="back-button" onClick={goHome} type="button">
+                <span aria-hidden="true">←</span> {t.gallery}
+              </button>
+            </div>
+            <h1 id="complete-title" ref={heading} tabIndex={-1}>
+              {t.completeTitle}
+            </h1>
+            <div
+              className={`celebration-art picture-${puzzle.id}`}
+              role="img"
+              aria-label={`${t.fullGrid}: ${t[puzzle.name]}`}
+            >
+              <PixelArt puzzle={puzzle} />
+            </div>
+            <h2 className="completed-name">{t[puzzle.name]}</h2>
+            <p>{t.completeBody}</p>
+            <div className="button-row">
+              <button
+                className="secondary"
+                onClick={() => openPuzzle(puzzle.id, true)}
+                disabled={!canStart(puzzle)}
+                aria-describedby={
+                  canStart(puzzle) ? undefined : 'replay-needs-numbers'
+                }
+              >
+                {t.replay}
+              </button>
+            </div>
+            {!canStart(puzzle) && (
+              <p id="replay-needs-numbers">
+                {t.needsNumbers} {largestColumn(puzzle)}
+              </p>
+            )}
+          </section>
+        ) : (
+          <section className="game" aria-labelledby="game-title">
+            <div className="game-nav">
+              <button className="back-button" onClick={goHome} type="button">
+                <span aria-hidden="true">←</span> {t.gallery}
+              </button>
+              <span className="level-pill">
+                {attempt.multiplication ? t.multiplication : attempt.rules
+                  ? describeRules(attempt.rules)
+                  : t[getDifficulty(puzzle)]}
+              </span>
+            </div>
+            <h1 id="game-title">{t[puzzle.name]}</h1>
+            <div className="game-layout">
+              <div className="picture-panel">
+                <PixelGrid
+                  puzzle={puzzle}
+                  solved={attempt.solved}
+                  activeRow={activeRow}
+                  latest={latest}
+                  t={t}
+                />
+                <p className="picture-caption">
+                  {reviewing ? t.practiceHint : multiplication ? t.multiplicationPlayHint : t.playHint}
+                </p>
+              </div>
+              <form
+                className="equation-panel"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  checkAnswer();
+                }}
+                onKeyDown={(event) => {
+                  if (event.ctrlKey || event.metaKey || event.altKey) return;
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    if (!event.repeat) checkAnswer();
+                  } else if (
+                    event.target !== answerRef.current &&
+                    /^[0-9]$/.test(event.key)
+                  ) {
+                    event.preventDefault();
+                    editAnswer(answer + event.key);
+                  } else if (
+                    event.target !== answerRef.current &&
+                    event.key === 'Backspace'
+                  ) {
+                    event.preventDefault();
+                    editAnswer(answer.slice(0, -1));
+                  }
+                }}
+              >
+                <div className="equation-heading">
+                  <span className="equation-label">
+                    {reviewing ? t.practice : t.solve}
+                  </span>
+                  {activeRow !== undefined && (
+                    <span className="row-pill">
+                      {t.row}{' '}
+                      <strong>{String.fromCharCode(64 + activeRow)}</strong>
+                    </span>
+                  )}
+                </div>
+                <div
+                  className={`sum-line${puzzle.threeNumbers ? ' three-number-sum' : ''}`}
+                  aria-live="off"
+                >
+                  <span data-testid="equation">
+                    {current?.equation.a}{' '}
+                    {current?.equation.op === '-' ? '−' : current?.equation.op}{' '}
+                    {current?.equation.b}
+                    {current?.equation.op2 !== undefined && (
+                      <>
+                        {' '}
+                        {current.equation.op2 === '-' ? '−' : '+'}{' '}
+                        {current.equation.d}
+                      </>
+                    )}
+                  </span>
+                  <span className="equals" aria-hidden="true">
+                    =
+                  </span>
+                  <label
+                    className={`answer-wrap ${feedback === 'retry' || feedback === 'range' || feedback === 'retryOnly' ? 'answer-retry' : ''}`}
+                  >
+                    <span className="sr-only">{t.answer}</span>
+                    <input
+                      ref={answerRef}
+                      type="text"
+                      inputMode="none"
+                      autoComplete="off"
+                      pattern="[0-9]*"
+                      maxLength={multiplication ? 3 : 2}
+                      value={answer}
+                      readOnly={pending}
+                      onChange={(event) => editAnswer(event.target.value)}
+                      aria-describedby="game-feedback"
+                    />
+                  </label>
+                </div>
+                <div
+                  id="game-feedback"
+                  className={`feedback ${feedback === 'correct' || feedback === 'practiceCorrect' ? 'positive' : ''}`}
+                  role="status"
+                  aria-live="polite"
+                  aria-atomic="true"
+                >
+                  {feedback ? (
+                    <>
+                      {feedback === 'range' && multiplication ? t.multiplicationRange : t[feedback]}
+                      {feedback === 'correct' && latest && progress.showRowHints
+                        ? ` ${t.coordinate} ${String.fromCharCode(64 + Number(latest.split(':')[0]))}${latest.split(':')[1]}.`
+                        : ''}
+                    </>
+                  ) : (
+                    <span>{t.gentle}</span>
+                  )}
+                </div>
+                <div className="keypad">
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit) => (
+                    <button
+                      key={digit}
+                      type="button"
+                      disabled={pending}
+                      onClick={() => editAnswer(answer + digit)}
+                    >
+                      {digit}
+                    </button>
+                  ))}
+                  <span className="keypad-decoration" aria-hidden="true">
+                    ✿
+                  </span>
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={() => editAnswer(answer + '0')}
+                  >
+                    0
+                  </button>
+                  <button
+                    type="button"
+                    className="erase-button"
+                    disabled={pending || !answer}
+                    aria-label={t.erase}
+                    onClick={() => editAnswer(answer.slice(0, -1))}
+                  >
+                    ⌫
+                  </button>
+                </div>
+                <button
+                  className="primary check-button"
+                  type="submit"
+                  disabled={pending || !answer}
+                >
+                  {t.check}
+                  <span aria-hidden="true">✓</span>
+                </button>
+              </form>
+            </div>
+            <button
+              className="text-button restart-button"
+              disabled={!canStart(puzzle)}
+              aria-describedby={
+                canStart(puzzle) ? undefined : 'restart-needs-numbers'
+              }
+              onClick={(event) => {
+                event.currentTarget.focus();
+                setModal('restart');
+              }}
+            >
+              {t.restart}
+            </button>
+            {!canStart(puzzle) && (
+              <p className="restart-note" id="restart-needs-numbers">
+                {t.needsNumbers} {largestColumn(puzzle)}
+              </p>
+            )}
+          </section>
+        )}
+      </main>
+      <footer className="app-footer">
+        <span
+          className={`connection-status ${pwa.ready ? 'is-ready' : ''}`}
+          role="status"
+        >
+          {pwa.offline ? t.offline : pwa.ready ? t.offlineReady : t.tagline}
+        </span>
+        <span>{notice === 'unavailable' ? '' : t.saved}</span>
+      </footer>
+      {modal && (
+        <Modal
+          title={
+            modal === 'help'
+              ? t.help
+              : modal === 'settings'
+                ? t.settings
+                : modal === 'reset'
+                  ? t.resetTitle
+                  : t.restartTitle
+          }
+          onClose={() => setModal(null)}
+          closeLabel={
+            modal === 'help' || modal === 'settings' ? t.close : t.cancel
+          }
+        >
+          {modal === 'help' ? (
+            <>
+              <h3>{t.howTitle}</h3>
+              <p>{multiplication ? t.multiplicationHelp : t.howBody}</p>
+              {!multiplication && <p>{t.threeNumbersHelp}</p>}
+              <p>{t.gentle}</p>
+              {!standalone && (
+                <>
+                  <h3>{t.installTitle}</h3>
+                  <p>{t.installBody}</p>
+                </>
+              )}
+              <p>{t.offlineHelp}</p>
+            </>
+          ) : modal === 'settings' ? (
+            <>
+              <label className="language-setting">
+                {t.language}
+                <select
+                  value={progress.language}
+                  onChange={(event) =>
+                    changeLanguage(event.target.value === 'cs' ? 'cs' : 'en')
+                  }
+                >
+                  <option value="en">English</option>
+                  <option value="cs">Čeština</option>
+                </select>
+              </label>
+              <label className="language-setting theme-setting">
+                {t.appearance}
+                <select
+                  value={progress.theme}
+                  onChange={(event) => {
+                    const theme = event.target.value;
+                    if (
+                      theme === 'system' ||
+                      theme === 'light' ||
+                      theme === 'dark'
+                    ) {
+                      store({ ...progressRef.current, theme });
+                    }
+                  }}
+                >
+                  <option value="system">{t.systemTheme}</option>
+                  <option value="light">{t.lightTheme}</option>
+                  <option value="dark">{t.darkTheme}</option>
+                </select>
+              </label>
+              <label className="hint-setting">
+                <input
+                  type="checkbox"
+                  checked={progress.showRowHints}
+                  aria-describedby="row-hints-help"
+                  onChange={(event) =>
+                    store({
+                      ...progressRef.current,
+                      showRowHints: event.target.checked,
+                    })
+                  }
+                />
+                {t.showRowHints}
+              </label>
+              <p id="row-hints-help">{t.rowHintsHelp}</p>
+              {!multiplication && <>
+              <h3>{t.exercisesTitle}</h3>
+              <label className="language-setting">
+                {t.exerciseMode}
+                <select
+                  value={
+                    rules
+                      ? rules.crossTen
+                        ? 'crossing'
+                        : 'noCrossing'
+                      : 'picture'
+                  }
+                  aria-describedby="exercises-help"
+                  onChange={(event) =>
+                    changeExercises(
+                      event.target.value === 'picture'
+                        ? 'picture'
+                        : { crossTen: event.target.value === 'crossing' },
+                    )
+                  }
+                >
+                  <option value="picture">{t.modePicture}</option>
+                  <option value="noCrossing">{t.modeNoCrossing}</option>
+                  <option value="crossing">{t.modeCrossing}</option>
+                </select>
+              </label>
+              {rules && (
+                <>
+                  <label className="language-setting theme-setting">
+                    {t.numbersUpTo}
+                    <select
+                      value={rules.maxNumber}
+                      onChange={(event) =>
+                        changeExercises({
+                          maxNumber: Number(event.target.value),
+                        })
+                      }
+                    >
+                      {limits.map((limit) => (
+                        <option key={limit} value={limit}>
+                          {limit}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="language-setting theme-setting">
+                    {t.operations}
+                    <select
+                      value={rules.operations}
+                      onChange={(event) => {
+                        const operations = event.target.value;
+                        if (
+                          operations === 'both' ||
+                          operations === 'add' ||
+                          operations === 'subtract'
+                        ) {
+                          changeExercises({ operations });
+                        }
+                      }}
+                    >
+                      <option value="both">{t.operationsBoth}</option>
+                      <option value="add">{t.operationsAdd}</option>
+                      <option value="subtract">{t.operationsSubtract}</option>
+                    </select>
+                  </label>
+                </>
+              )}
+              <p id="exercises-help">{t.exercisesHelp}</p>
+              </>}
+              <h3>{t.storageTitle}</h3>
+              <p>{t.storageBody}</p>
+              {analyticsEnabled && (
+                <>
+                  <h3>{t.analyticsTitle}</h3>
+                  <p>{t.analyticsBody}</p>
+                  <a href="https://docs.umami.is/docs/faq" rel="noreferrer">
+                    {t.analyticsPolicy}
+                  </a>
+                </>
+              )}
+              {typeof navigator.storage?.persist === 'function' && (
+                <button
+                  className="secondary"
+                  onClick={() => {
+                    void requestPersistence();
+                  }}
+                >
+                  {t.persist}
+                </button>
+              )}
+              {persistent && <p role="status">{t[persistent]}</p>}
+              {pwa.waiting && (
+                <>
+                  <button
+                    className="secondary"
+                    onClick={() => {
+                      void update();
+                    }}
+                  >
+                    {t.update}
+                  </button>
+                  {updateBlocked && <p role="alert">{t.updateBlocked}</p>}
+                </>
+              )}
+              <button
+                className="text-button danger"
+                onClick={() => setModal('reset')}
+              >
+                {t.resetAll}
+              </button>
+            </>
+          ) : (
+            <>
+              <p>{modal === 'reset' ? t.resetBody : t.restartBody}</p>
+              <button className="primary" onClick={confirmReset}>
+                {t.confirm}
+              </button>
+            </>
+          )}
+        </Modal>
+      )}
+    </div>
+  );
+}

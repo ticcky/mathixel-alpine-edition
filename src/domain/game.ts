@@ -1,0 +1,260 @@
+import {
+  crossesTen,
+  enumerateMultiplication,
+  isValidMultiplication,
+  enumerateEquations,
+  enumerateRuleEquations,
+  isValidEquation,
+  isValidRuleEquation,
+  isValidRules,
+} from './arithmetic';
+import type { ArithmeticRules } from './arithmetic';
+import { isRecord, validatePuzzle } from './puzzle';
+import type { Equation, Puzzle } from './puzzle';
+
+export interface Attempt {
+  multiplication?: true;
+  multiplicationTable?: true;
+  puzzleId: string;
+  puzzleVersion: number;
+  queue: { pixelId: string; equation: Equation }[];
+  solved: string[];
+  reviewPixelId?: string;
+  /** Settings rules used to create the queue; absent means the picture's own mode. */
+  rules?: ArithmeticRules;
+}
+
+/** Largest answer a picture needs; answers are column numbers. */
+export function largestColumn(puzzle: Pick<Puzzle, 'pixels'>): number {
+  return Math.max(...puzzle.pixels.map(({ col }) => col));
+}
+
+export function fitsRules(
+  puzzle: Pick<Puzzle, 'pixels'>,
+  rules: ArithmeticRules | undefined,
+): boolean {
+  return rules === undefined || largestColumn(puzzle) <= rules.maxNumber;
+}
+
+function randomIndex(length: number, random: () => number): number {
+  const value = random();
+  if (!Number.isFinite(value) || value < 0 || value >= 1) {
+    throw new RangeError('Random source must return a number in [0, 1).');
+  }
+  return Math.floor(value * length);
+}
+
+function equationKey({ a, op, b, op2, d }: Equation): string {
+  return `${a}${op}${b}${op2 === undefined ? '' : `${op2}${d}`}`;
+}
+
+export function createAttempt(
+  puzzle: Puzzle,
+  random: () => number = Math.random,
+  rules?: ArithmeticRules,
+  multiplication = false,
+): Attempt {
+  if (multiplication) rules = undefined;
+  if (!validatePuzzle(puzzle)) throw new TypeError('Invalid puzzle.');
+  if (
+    rules !== undefined &&
+    (!isValidRules(rules) || !fitsRules(puzzle, rules))
+  )
+    throw new RangeError('Puzzle needs larger numbers than these rules allow.');
+  const pixels = [...puzzle.pixels];
+  for (let index = pixels.length - 1; index > 0; index -= 1) {
+    const other = randomIndex(index + 1, random);
+    const current = pixels[index]!;
+    pixels[index] = pixels[other]!;
+    pixels[other] = current;
+  }
+  const candidates = multiplication ? enumerateMultiplication() : rules
+    ? enumerateRuleEquations(rules)
+    : enumerateEquations(puzzle.intro, puzzle.threeNumbers);
+  const uses = new Map<string, number>();
+  let previousOp: Equation['op'] | undefined;
+  const queue = pixels.map((pixel) => {
+    let choices = multiplication ? [...candidates] : candidates.filter(({ c }) => c === pixel.col);
+    if (rules?.crossTen) {
+      const crossing = choices.filter(crossesTen);
+      if (crossing.length > 0) choices = crossing;
+    }
+    const leastUsed = Math.min(
+      ...choices.map((equation) => uses.get(equationKey(equation)) ?? 0),
+    );
+    choices = choices.filter(
+      (equation) => (uses.get(equationKey(equation)) ?? 0) === leastUsed,
+    );
+    const nonzero = choices.filter(
+      ({ a, b, d }) => a !== 0 && b !== 0 && d !== 0,
+    );
+    if (nonzero.length > 0) choices = nonzero;
+    const alternating = choices.filter(({ op }) => op !== previousOp);
+    if (alternating.length > 0) choices = alternating;
+    const equation = { ...choices[randomIndex(choices.length, random)]! };
+    const key = equationKey(equation);
+    uses.set(key, (uses.get(key) ?? 0) + 1);
+    previousOp = equation.op;
+    return { pixelId: pixel.id, equation };
+  });
+  return {
+    ...(multiplication ? { multiplication: true as const, multiplicationTable: true as const } : {}),
+    puzzleId: puzzle.id,
+    puzzleVersion: puzzle.version,
+    queue,
+    solved: [],
+    ...(rules ? { rules: { ...rules } } : {}),
+  };
+}
+
+export function currentExercise(
+  attempt: Attempt,
+): Attempt['queue'][number] | undefined {
+  return attempt.reviewPixelId !== undefined
+    ? attempt.queue.find(({ pixelId }) => pixelId === attempt.reviewPixelId)
+    : attempt.queue[attempt.solved.length];
+}
+
+function preferDifferentExercise(
+  exercises: Attempt['queue'],
+  previous: Equation,
+): Attempt['queue'][number] | undefined {
+  const previousKey = equationKey(previous);
+  return (
+    exercises.find(({ equation }) => equationKey(equation) !== previousKey) ??
+    exercises[0]
+  );
+}
+
+export function deferExercise(
+  attempt: Attempt,
+  expectedPixelId: string,
+): Attempt {
+  const current = currentExercise(attempt);
+  if (!current || isComplete(attempt) || current.pixelId !== expectedPixelId) {
+    return attempt;
+  }
+  if (attempt.reviewPixelId !== undefined) {
+    const next = { ...attempt };
+    if (attempt.solved.length === 1) {
+      delete next.reviewPixelId;
+    } else {
+      const index = attempt.solved.indexOf(attempt.reviewPixelId);
+      const candidates = [
+        ...attempt.queue.slice(index + 1, attempt.solved.length),
+        ...attempt.queue.slice(0, index),
+      ];
+      next.reviewPixelId = preferDifferentExercise(
+        candidates,
+        current.equation,
+      )!.pixelId;
+    }
+    return next;
+  }
+  if (attempt.queue.length - attempt.solved.length === 1) {
+    return attempt.solved.length > 0
+      ? {
+          ...attempt,
+          reviewPixelId: preferDifferentExercise(
+            attempt.queue.slice(0, attempt.solved.length),
+            current.equation,
+          )!.pixelId,
+        }
+      : attempt;
+  }
+  const remaining = attempt.queue.slice(attempt.solved.length + 1);
+  const next = preferDifferentExercise(remaining, current.equation)!;
+  return {
+    ...attempt,
+    queue: [
+      ...attempt.queue.slice(0, attempt.solved.length),
+      next,
+      ...remaining.filter((entry) => entry !== next),
+      current,
+    ],
+  };
+}
+
+export function submitAnswer(
+  attempt: Attempt,
+  answer: string,
+  expectedPixelId: string,
+): Attempt {
+  const current = currentExercise(attempt);
+  if (
+    !current ||
+    isComplete(attempt) ||
+    current.pixelId !== expectedPixelId ||
+    !(attempt.multiplication ? /^[0-9]{1,3}$/ : /^[0-9]{1,2}$/).test(answer) ||
+    Number(answer) !== current.equation.c
+  ) {
+    return attempt;
+  }
+  if (attempt.reviewPixelId !== undefined) {
+    const next = { ...attempt };
+    delete next.reviewPixelId;
+    return next;
+  }
+  return { ...attempt, solved: [...attempt.solved, current.pixelId] };
+}
+
+export function isComplete(attempt: Attempt): boolean {
+  return (
+    attempt.queue.length > 0 && attempt.solved.length === attempt.queue.length
+  );
+}
+
+export function validateAttempt(
+  value: unknown,
+  puzzle: Puzzle,
+  legacyMultiplication = false,
+): value is Attempt {
+  if (
+    !validatePuzzle(puzzle) ||
+    !isRecord(value) ||
+    value.puzzleId !== puzzle.id ||
+    value.puzzleVersion !== puzzle.version ||
+    !Array.isArray(value.queue) ||
+    value.queue.length !== puzzle.pixels.length ||
+    !Array.isArray(value.solved) ||
+    value.solved.length > value.queue.length ||
+    ('multiplicationTable' in value && (value.multiplicationTable !== true || value.multiplication !== true)) ||
+    ('multiplication' in value && value.multiplication !== true) ||
+    (value.multiplication === true && 'rules' in value) ||
+    ('rules' in value && !isValidRules(value.rules))
+  ) {
+    return false;
+  }
+  const rules = isValidRules(value.rules) ? value.rules : undefined;
+  const pixels = new Map(puzzle.pixels.map((pixel) => [pixel.id, pixel]));
+  const seen = new Set<string>();
+  for (const entry of value.queue) {
+    if (
+      !isRecord(entry) ||
+      typeof entry.pixelId !== 'string' ||
+      seen.has(entry.pixelId) ||
+      !(value.multiplication === true ? isValidMultiplication(entry.equation, legacyMultiplication) : rules
+        ? isValidRuleEquation(entry.equation, rules)
+        : isValidEquation(entry.equation, puzzle.intro, puzzle.threeNumbers)) ||
+      !isRecord(entry.equation) ||
+      !pixels.has(entry.pixelId) ||
+      ((value.multiplication !== true || legacyMultiplication) && entry.equation.c !== pixels.get(entry.pixelId)?.col)
+    ) {
+      return false;
+    }
+    seen.add(entry.pixelId);
+  }
+  for (let index = 0; index < value.solved.length; index += 1) {
+    const entry: unknown = value.queue[index];
+    if (!isRecord(entry) || value.solved[index] !== entry.pixelId) return false;
+  }
+  if (
+    'reviewPixelId' in value &&
+    (typeof value.reviewPixelId !== 'string' ||
+      value.queue.length - value.solved.length !== 1 ||
+      !value.solved.includes(value.reviewPixelId))
+  ) {
+    return false;
+  }
+  return true;
+}

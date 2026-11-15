@@ -1,0 +1,310 @@
+# Mathixel
+
+**Little sums. Lovely discoveries.** A bright, touch-first pixel-picture game for early learners, in English and Czech. Solve a sum, check the answer, and one colored pixel appears automatically. No player accounts, ads, external assets, penalties, timers, or sound. Analytics is off by default; deployments may explicitly enable the limited, cookieless usage statistics described below.
+
+Eleven original animals are available from the start: Sunny fish (28 pixels), Berry butterfly (32), Honey bee (36), Pebble snail (40), Mossy turtle (44), Ginger cat (48), Daffodil duck (50), Clover bunny (54), Amber fox (58), Twilight owl (61), and Biscuit pup (63). The five intermediate drawings keep gaps between available puzzle lengths to at most four pixels. The first four puzzles stay within 10; later puzzles introduce the second ten. Background squares never give away the unfinished silhouette.
+
+Five original food pictures are also available: Watermelon (32 pixels), Fries (39), Cheddar fingers (48), Hamburger (57), and Sushi (60). Watermelon and Fries use introductory arithmetic within 10; the other three include columns above 10.
+
+The **Advanced** difficulty includes three extra-large original pictures: Cheetah (106 pixels), German shepherd (133), and Ferrari sports car (119). Their three-number sums add a second calculation without carrying or borrowing across a ten.
+
+Twelve more original pictures separate arithmetic difficulty from puzzle length: Rocket and Robot face offer small advanced puzzles; Octopus and Dinosaur offer medium advanced puzzles; Train, Lighthouse, and Hot-air balloon offer large standard puzzles; Dragon and Space shuttle offer large advanced puzzles; Sunflower and Donut offer medium beginner puzzles; and Chick and piglet offers an extra-large standard puzzle. Ambulance, Police car, Firetruck, and Helicopter add four large standard puzzles. All thirty-five pictures are unlocked and available offline after caching.
+
+### Difficulty and length
+
+Difficulty is derived from the existing arithmetic mode: **Beginner** uses two numbers within 10, **Standard** uses two numbers within 20, and **Advanced** uses three numbers below 20. Each individual calculation step avoids crossing through a ten. “Advanced” is relative to the other modes in this game.
+
+Length counts colored pixels, not grid dimensions: one colored pixel requires one exercise. Background squares do not count; retries and practice can add to the actual solving work.
+
+| Difficulty | Small (1–40) | Medium (41–70) | Large (71–100) | Extra-large (101+) | Total  |
+| ---------- | ------------ | -------------- | -------------- | ------------------ | ------ |
+| Beginner   | 6            | 2              | 0              | 0                  | 8      |
+| Standard   | 0            | 10             | 7              | 1                  | 18     |
+| Advanced   | 2            | 2              | 2              | 3                  | 9      |
+| **Total**  | **8**        | **14**         | **9**          | **4**              | **35** |
+
+The gallery groups all pictures under Beginner, Standard, and Advanced headings. Within each group, pictures appear from smallest to largest by exercise count. Cards show their length band and exact exercise count; saved attempts and discovery badges remain available in every group.
+
+The interface uses a picture-park visual language: original pixel creatures on
+contained green islands, colored difficulty signposts, and large touch controls.
+Desktop picture tiles place artwork beside the name and progress; phone tiles
+stack artwork above their labels. Cards use equal corners and straight artwork
+seams; centered arrow icons indicate play without repeated start text. Localized
+headings use the available width rather than a narrow character measure.
+Gallery thumbnails center on their colored artwork rather than the arithmetic
+grid's empty margins. Playable coordinates remain unchanged. The exercise grid
+has a neutral surround, and the header uses the Mathixel text wordmark alone.
+Light, dark, and system appearance use the
+same layout without changing puzzle colors. Product and visual-system context
+are recorded in `PRODUCT.md` and `DESIGN.md`.
+
+## Run locally
+
+Use **Node 24 LTS**, at least **24.15.0** within the 24.x line, and npm. `.nvmrc` records the reproducible baseline. The lockfile is included. TypeScript 6 is intentional: the maintained TypeScript ESLint parser currently supports TypeScript below 6.1.
+
+```powershell
+npm ci
+npm run dev
+```
+
+Open the printed URL at **`/`**. Development intentionally does not register a service worker. For the actual installable/offline build:
+
+```powershell
+npm run build
+npm run preview
+```
+
+Open **http://127.0.0.1:4173/**. HTTPS is required when not on localhost. Nothing in these commands publishes the site.
+
+## Play
+
+Use the switch at the top to choose **Addition / subtraction** or **Multiplication**. Each mode saves its own picture progress. Switching returns to the gallery and keeps your unfinished pictures. Multiplication covers every pair of factors from 1 to 10, with answers up to 100. Correct answers reveal pixels automatically; products do not need to match picture columns. The existing exercise settings apply to addition/subtraction.
+
+Pick any picture. The answer to the equation is the column number. Enter up to two digits on the built-in keypad or a physical keyboard and press **Check / Ověřit** or Enter. Backspace works in either mode. Wrong answers (including out-of-range numbers) move the exercise to the back of the remaining queue without revealing a pixel. After brief feedback, the answer clears and another exercise appears; the missed exercise comes back later. Correct answers save immediately, reveal exactly one coordinate, then release a short duplicate-submission guard.
+
+The browser or phone **Back** button returns from a picture to the gallery without losing saved progress. Browser **Forward** reopens the picture, including completed pictures. Replaying or restarting a picture does not add an extra Back step.
+
+In **Settings / Nastavení** (the gear button), disable **Show row hints / Zobrazovat nápovědu řádku** to hide both the active-row highlight and the equation's row letter, including screen-reader row hints. Permanent grid coordinates remain visible. Hints default to on, including for existing saves; your choice is remembered across puzzles, reloads and collection resets.
+
+Choose **Appearance / Vzhled** in Settings: **System / Podle zařízení** follows your device's light or dark appearance, including changes while playing; **Light / Světlý** and **Dark / Tmavý** override it. System is the default for new and existing saves. Your choice is remembered across reloads and collection resets. Puzzle pixel colors and saved equations stay unchanged.
+
+Under **Exercises / Příklady** in Settings, **Each picture's own / Podle obrázku** (the default) keeps every picture's built-in difficulty. Choose **Without crossing ten / Bez přechodu přes desítku** or **Crossing ten / S přechodem přes desítku** as a preset, then fine-tune **Numbers up to / Čísla do** (10–20) and **Sums / Počítání** (adding and subtracting, adding only, or subtracting only). For example, _Crossing ten_ with _Numbers up to 12_ gives sums such as `9+3`, `8+4`, `12-5` and `11-3`. These two-number rules replace each picture's own mode, including three-number pictures, for every picture started, restarted or replayed afterwards; pictures already in progress keep their saved equations. Because the answer is the column, a picture whose widest target column is above the limit shows **Needs numbers up to N / Potřebuje čísla do N** and cannot be started, restarted or replayed until the limit is raised; in-progress pictures can still be finished and completed pictures viewed. The choice is remembered across reloads and collection resets.
+
+If only one pixel remains when an answer is wrong, a previously solved exercise becomes a clearly labeled practice round. Practice has no row hint, never adds another pixel, and returns to the final exercise when answered correctly. A wrong practice answer moves to another practice exercise. Neither missed exercises nor practice rounds cost progress. Exercise order and practice state are saved immediately, so reopening continues from the deferred exercise rather than permitting an immediate repeat.
+
+Return to **My pictures / Moje obrázky** at any point to resume later with the same equations. Completed pictures have a discovery badge and can be replayed without losing it. Restarting an unfinished picture or resetting the collection requires confirmation.
+
+The header language switch works during a puzzle without changing its queue. On first use, Czech is chosen if the browser's preferred languages include Czech; otherwise English is used. The saved choice takes precedence thereafter. **Settings** contains language, row hints, exercise presets and limits, local-data controls, deferred app updates, and collection reset. The separate **Help / Nápověda** question-mark button contains game instructions, installation guidance, and offline-play advice.
+
+## Architecture and arithmetic
+
+| Location                                        | Responsibility                                                                     |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `src\domain\arithmetic.ts`                      | Exhaustive finite enumeration and independent validity checks                      |
+| `src\domain\puzzle.ts`                          | Typed content and runtime validation                                               |
+| `src\domain\game.ts`                            | Stable shuffled attempts, equation selection, pure guarded transitions             |
+| `src\content\animals.ts`                        | Original coordinate-based picture artwork, palettes, and content versions          |
+| `src\App.tsx`, `src\components\`, `src\styles\` | Gallery, game, keypad, live feedback, completion, modal help and responsive layout |
+| `src\i18n\`                                     | Typed English/Czech messages and first-use language detection                      |
+| `src\storage\progress.ts`                       | Versioned local progress, field-level validation and isolated recovery             |
+| `src\pwa\usePwa.ts`, `vite.config.ts`           | Consent-driven worker lifecycle and Workbox-generated precaching                   |
+| `src\analytics.ts`                              | Optional production-only, best-effort Umami event reporting                        |
+| `public\icons\`, `scripts\generate-icons.mjs`   | Locally generated original PNG/SVG app icons                                       |
+| `tests\e2e\`, `tests\fixtures\`                 | Built-artifact browser and real service-worker acceptance                          |
+
+There is no backend, router, global state library, canvas game surface, or remote content.
+
+For `a op b = c`, all values are integers, `a` is 0–20, `b` is 0–10, and `c` is 1–20. Both `a` and `c` must share at least one **closed** interval, `[0,10]` or `[10,20]`. Starting or landing on a ten is allowed; crossing through it is not. Introductory puzzles additionally require every value to be at most 10.
+
+Allowed: `12+5`, `8+2`, `10-3`, `13-3`, `20-5`, `10+10`, `20-0`. Forbidden: `7+8`, `12-5`, `0+20`, and every zero answer.
+
+Puzzles with `threeNumbers: true` use `a op b op2 d = c`, evaluated from left to right. Every operand, intermediate result, and final answer is **strictly below 20**; `b` and `d` are at most 10, intermediate results may be zero, and the final answer must be positive. Each individual step must stay in one closed ten band (`[0,10]` or `[10,19]`). Landing exactly on 10 allows the next step to move to the other band: `14-4-3 = 7` and `8+2+5 = 15` are allowed; `14-5-2`, `7+8-3`, and `18+2-1` are not. Existing pictures keep their original two-number equations and saves.
+
+Settings rules (`ArithmeticRules`: `maxNumber` 10–20, `crossTen`, `operations`) use two-number `a op b = c` sums where `a` and `c` are at most `maxNumber`, `b` is 0–10, `c` is positive, and only the chosen operations appear. Without `crossTen`, the closed ten-band rule above applies; with it, crossing is allowed and selection prefers crossing sums for every column that has one (only answer 10, and additions below 10, cannot cross). Attempts created this way store a copy of their rules and are validated against them; attempts without rules use the picture's own mode.
+
+Each new attempt randomly selects exercises from the full valid pool for each result. No expression repeats until every alternative for that result has been used; if the pool is exhausted, reuse stays balanced. Among equally used candidates, selection favors nonzero operands and alternating operations. All bundled images have enough alternatives for every pixel to receive a different expression. Replays select a fresh subset, although exercises can recur across attempts. Selection never retries randomly until something works. Injected randomness makes tests reproducible. Each attempt persists its exact pixel/equation pairs, so existing saves keep their equations; deferral reorders only unsolved entries, preserving the solved prefix. A different displayed expression is preferred for the next exercise when available. Final-pixel practice references an already solved entry. Transitions check the expected current pixel ID, so stale submissions cannot skip an equation.
+
+### Changing content or translations
+
+Define a puzzle with a unique stable ID, positive integer content version, palette and rectangular dimensions at most 20×20. Rows and columns are **one-based**; pixel IDs are `row:column`, and only target pixels belong in `pixels`. Palette values are hex colors. Every target column must have a valid equation, and coordinates must be unique. `validatePuzzle` is run when bundled content loads.
+
+Difficulty and length are derived in `src/domain/categories.ts`; do not store separate category or exercise-count fields. Beginner artwork must fit within 10 columns, and advanced artwork cannot use column 20. Length is independent of arithmetic difficulty. When adding content, update the catalog/category coverage tests and translations; preserve boundary tests for 40/41, 70/71, and 100/101 exercises.
+
+Keep small puzzles recognizable at phone size and review the full original sprite, not only its data. Bump a puzzle's `version` whenever its artwork, target coordinates, dimensions, or arithmetic mode change; this safely invalidates only that saved attempt. Independent attempts, valid language and discovery badges remain. Do not reuse removed IDs for different pictures.
+
+Add English keys in `src\i18n\en.ts` and corresponding Czech keys in `cs.ts`; TypeScript enforces completeness. Check both visual length and screen-reader language. Regenerate icons with `npm run icons` if their original source drawing changes.
+
+## Local data and recovery
+
+Only **`mathogram.progress`** is written in localStorage. Its version-1 envelope contains language, the row hint, appearance and exercise preferences, attempts (including content versions, optional exercise rules, exact equations, solved prefix and optional final-pixel practice reference), and completion badges. Earlier version-1 saves without these preferences are loaded with hints enabled, system appearance and each picture's own exercises, and retain their progress. Runtime validation rejects invalid arithmetic, stale content, unknown coordinates, duplicate queue entries, skipped pixels, invalid practice references and malformed shapes. Recovery salvages independently valid fields and shows a localized notice; unexpected programming errors are not swallowed.
+
+Every correct answer, deferral, practice transition, fresh attempt, reset and preference change is saved synchronously, before animation. Quota/security failures show a persistent warning and allow in-memory play without claiming it was saved. Update acceptance is blocked if that save fails. No unload event is required, and neither reset action calls `localStorage.clear()` or deletes any origin-wide cache.
+
+Progress is **not permanent or synchronized**. Browser/device cleanup can remove it. Home Screen and browser contexts may not share the same storage. Optional persistent-storage permission is requested only from Settings; denial is normal and reported. Back up nothing to a server: there is no server.
+
+## Optional usage analytics
+
+Analytics is **disabled unless explicitly enabled at build time**, and always disabled in the Vite development server. The integration uses **Umami**, with no added dependencies or third-party scripts. It sends best-effort JSON POST requests to a configured HTTPS `/api/send` endpoint. Use Umami Cloud's free Hobby plan or your own self-hosted Umami instance; hosting and database maintenance are your responsibility for self-hosting. Check [current Cloud plans](https://umami.is/pricing) for quotas and retention. Custom-event data also contributes to Cloud usage.
+
+| Event                    | Meaning                                                                                                        | Custom properties                                                                                                                                                                                                           |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pageview (no event name) | One online app load/reload, then each in-app switch between the gallery and a picture                          | None; the URL is a virtual screen path (see below)                                                                                                                                                                          |
+| `Puzzle started`         | A new attempt, including a replay or confirmed restart; not resuming an existing picture                       | `puzzleId`: a stable ID from the current puzzle catalog; `replay`: `true` for Play again/restart; `exercises`: `picture` or `custom` (Settings rules); `display`: `standalone` or `browser`                                 |
+| `Puzzle left`            | Leaving an unfinished picture in-app (My pictures, logo, browser Back); not closing or reloading the page      | `puzzleId`; `progress`: revealed pixels as a percentage floored to 10 (`0`–`90`)                                                                                                                                            |
+| `Puzzle completed`       | The final pixel of an attempt is revealed; not practice, repeated submissions, or reopening a finished picture | `puzzleId`: the same stable puzzle ID                                                                                                                                                                                       |
+| `Puzzle time spent`      | A non-overlapping interval of approximate active online solving time                                           | `puzzleId`, `activeSeconds`: positive whole seconds                                                                                                                                                                         |
+| `Dialog opened`          | The Settings or Help dialog is opened (restart/reset confirmations are not reported)                           | `dialog`: `settings` or `help`                                                                                                                                                                                              |
+| `Setting changed`        | A saved preference changes, from Settings or the header language toggle; one event per changed value           | `setting` and `value`: `language` (`en`/`cs`), `theme` (`system`/`light`/`dark`), `rowHints` (boolean), `exercises` (`picture`/`custom`), `maxNumber` (10–20), `crossTen` (boolean), `operations` (`both`/`add`/`subtract`) |
+
+### Screens, languages and devices
+
+Real browser URLs do not change. Instead, pageviews report a virtual path below the deployment base path: the base path itself for the gallery and `puzzle/<puzzleId>` for a picture (for example `/puzzle/fish`, or `/mathogram/puzzle/fish` on a project subpath). Custom events use the path of the screen they happened on. Umami's Pages, entry/exit, Journeys and Funnels reports therefore show which pictures players open and where they leave. Help and Settings dialogs are not separate screens.
+
+Every request also carries Umami's standard `language` (the game's `en`/`cs` language, not the browser's) and `screen` (`<width>x<height>` of the device screen) fields, enabling the Languages and Devices reports.
+
+Suggested dashboard use: a funnel of `/` → `/puzzle/<id>` → `Puzzle started` → `Puzzle completed`; `Puzzle left` grouped by `puzzleId` and `progress` to find pictures that lose players; `Puzzle started` grouped by `display`, `exercises` and `replay`; `Setting changed` grouped by `setting` and `value` to see which preferences parents adjust. Switching from picture exercises to custom rules reports `exercises: custom` followed by each initial rule value; settings restored from saved progress on load are not reported.
+
+The dashboard provides visits and estimated visitors over time. Custom events show starts/completions, and their `puzzleId` property shows popular puzzles regardless of whether the picture is an animal or another subject. IDs are checked against the bundled catalog, not a separate animal-only list. These are aggregate counts, not identifiable players or individual learning histories. Starts and completions can occur on different days; their ratio is not a per-player completion rate.
+
+The earlier analytics implementation used `animal` for this property. New events use only `puzzleId`; existing Umami data is not rewritten. If the earlier build collected data, update dashboard property filters and account for both property names when comparing historical periods. Event names and puzzle IDs have not changed. Builds before per-screen pageviews reported every request at the base path, so `/puzzle/<id>` pages and `Puzzle left` events only exist from that release onward.
+
+### Solving time
+
+`Puzzle time spent` reports time while an unfinished puzzle is open, including resumed attempts, practice and brief answer feedback. It pauses in the gallery, completed-picture screen, all dialogs, hidden/background pages, and offline. After 60 seconds without a pointer press or key press, timing stops until another interaction. This is an approximation: thinking without interaction beyond one minute is excluded, while the first idle minute can still count.
+
+Intervals are sent every 60 seconds and when leaving play, opening a dialog, completing a puzzle, or hiding/leaving the page. Each interval is rounded down to whole seconds; zero-length intervals are omitted. Periodic intervals and final flushes do not overlap. Timing resumes with a fresh interval when returning to play. Network failures are not retried; going offline discards the current unsent interval. Closing or terminating the app may still lose the final interval.
+
+To measure total reported solving time per picture, **sum `activeSeconds` grouped by `puzzleId`** in Umami event-data reporting or exported data. Counting events measures intervals, not seconds; averaging intervals does not give average puzzle completion time. These totals include unfinished attempts, replays and restarts. No attempt/player identifier or timing data is persisted with saved progress, so this does not measure an individual attempt's full time across reloads. No visible timer or time pressure is added to the game.
+
+### iOS Home Screen use
+
+Online launches from an iPhone/iPad Home Screen run the same analytics code as browser visits, provided the installed build has analytics enabled and requests are not blocked. A fresh app load/reload sends a gallery pageview, and moving between screens sends further pageviews; merely returning to an already-running app does not. Puzzle starts, completions and active solving time are reported in either context; background time is excluded. Adding the site to the Home Screen is not tracked; `Puzzle started` reports `display: standalone` for Home Screen/installed launches and `browser` otherwise. Offline launches and gameplay are not reported or backfilled. An older installed copy needs to accept the analytics-enabled update first.
+
+Browser acceptance simulates the iOS standalone flag to verify this code path; it is not physical iPhone/iPad or live-provider acceptance.
+
+### Enable for GitHub Pages
+
+1. **Review privacy and consent requirements first**, especially because this is a children's game. This implementation does not provide a consent banner or parental-consent flow. Cookieless does not automatically mean consent-free; leave analytics disabled if consent is required until an appropriate flow is implemented. Review the provider's processing terms, retention and access controls.
+2. Add a website for `davidmarek.github.io` in Umami and copy its **Website ID** (UUID) from its settings/tracking code. You do not need to install the provided script. Events `Puzzle started`, `Puzzle left`, `Puzzle completed`, `Puzzle time spent`, `Dialog opened` and `Setting changed` appear automatically after receipt; inspect their event data to break down activity by `puzzleId`.
+3. In repository **Settings → Secrets and variables → Actions → Variables**, set all three public build settings:
+   - `VITE_ANALYTICS_ENABLED`: the exact string `true`.
+   - `VITE_UMAMI_WEBSITE_ID`: the Website ID from Umami, **not** an API key.
+   - `VITE_UMAMI_ENDPOINT`: `https://cloud.umami.is/api/send` for Cloud, or `https://analytics.example.com/api/send` for your own instance. Self-hosted base paths such as `/umami/api/send` are supported. Use a trusted HTTPS endpoint without credentials, query strings or fragments; custom collection paths not ending in `/api/send` are not supported.
+
+   These values are bundled into public JavaScript. Do not put API keys or secrets in any `VITE_` variable.
+
+4. Publish through the existing owner-gated Pages workflow. It passes these variables to validation and builds, then deploys the tested artifact. Missing/invalid Website ID or endpoint settings, or any enable value other than `true`, leave analytics off. To disable, remove the enable variable or set it to `false` and redeploy. Installed copies retain their prior configuration until they accept the app update.
+5. Check a real online visit in the Umami dashboard and its Events view. Browser blockers and provider filtering can drop events; a successful HTTP response alone is not proof an event was recorded. Automated tests intercept analytics and never intentionally submit events to Umami. Self-hosted proxies must permit CORS POST requests and OPTIONS preflights with `Content-Type: application/json` from the site; no credentials or authentication headers are sent.
+
+### Privacy and limitations
+
+- Event payloads contain only the configured Website ID, site hostname, a virtual screen path (deployment base path, optionally followed by `puzzle/<puzzleId>`), the game language (`en`/`cs`), device screen dimensions, and for events the name and the properties listed above. Real URL paths, query strings, fragments, answers, equations, page title, saved progress and completion badges are not added to the payload. Pointer/key interactions only reset a local idle timer; their content and individual timestamps are never sent. HTTP referrers are suppressed.
+- Requests omit cookies/credentials and cannot follow redirects. No analytics identifiers or event queues are written to browser storage. Umami's returned cache/session/visit IDs are discarded; no `identify` calls or custom visitor IDs are used.
+- Like any receiving service, Umami receives the connection's IP address and browser information. It derives visitor/session identifiers server-side from the website, IP and User-Agent with a rotating salt; these are estimates, not exact counts of people. The [Umami documentation](https://docs.umami.is/docs/metric-definitions) states raw IP addresses are not stored by analytics, but separately configured proxy/server logs may retain them. Review hosting and retention settings. Ignoring the response cache can split visits at hour boundaries.
+- Browser **Do Not Track** (`1`) and **Global Privacy Control** suppress requests. English/Czech Settings display a parent-facing disclosure and a link to Umami's privacy-related FAQ when analytics is configured.
+- Offline events are discarded, not queued or replayed on reconnect. Network failures, blocked requests and HTTP errors do not interrupt gameplay and are not retried. Offline use, privacy preferences, blockers and network failures therefore undercount usage.
+- For self-hosting, maintain Umami and its database separately; this repository deploys only the game. Review disclosure, logging and retention for your chosen host before enabling collection.
+
+### Analytics acceptance
+
+Run `npm run validate` with analytics variables unset to verify the default local-only build. Also validate an enabled build with all three variables set in the same shell (PowerShell; the example UUID below is test-only):
+
+```powershell
+$env:VITE_ANALYTICS_ENABLED = 'true'
+$env:VITE_UMAMI_WEBSITE_ID = '00000000-0000-4000-8000-000000000001'
+$env:VITE_UMAMI_ENDPOINT = 'https://cloud.umami.is/api/send'
+npm run validate
+```
+
+Enabled browser tests mock the exact configured Umami endpoint, check event payloads, repeat protection, omitted cookies/referrers, privacy signals, failures and offline play. Keep the same variables for build and browser tests. Do not manually browse an enabled preview unless you intend it to send analytics; development via `npm run dev` never does.
+
+Dedicated analytics browser tests block service workers so requests remain interceptable in both browsers. Other WebKit tests opt out with Do Not Track because worker-controlled fetches can bypass Playwright routing. Chromium's real service-worker tests additionally verify that offline play sends no events and reconnecting does not replay them.
+
+## Offline installation and updates
+
+Vite assets, manifest ID/start URL/scope, icons and service worker use relative URLs, so the same build works at a domain root or a project subpath. `vite-plugin-pwa` generates the complete Workbox precache, including both languages and all thirty-five puzzles. There are no external font/CDN dependencies or gameplay API requests. Optional analytics requests are never cached or queued by the service worker.
+
+Wait for **Ready for offline play / Připraveno na hraní offline** before disconnecting. This confirmation follows successful worker installation/caching, not merely a request to register. An active installed worker also confirms a prior successful cache. The first-ever visit cannot work offline; browser eviction can later remove cached files.
+
+On iPhone/iPad (target **iOS/iPadOS 17+**), open the site in Safari, tap **Share → Add to Home Screen**, enable **Open as Web App** if shown, then Add. Install instructions are hidden when standalone is detected. This is a native-like Home Screen web app, **not an App Store app**.
+
+Updates install in a waiting worker. **Later** leaves the current game alone; the update remains accessible in Settings. **Save & update** first saves progress, then sends Workbox's `SKIP_WAITING` message and reloads after the worker takes control. Another tab accepting an update does not trigger an unsolicited reload here. Registration, caching, messaging, and activation-timeout failures are surfaced. Workbox cache names and navigation fallback are scoped to Mathixel; obsolete-cache cleanup does not sweep other projects' storage.
+
+If changing the hosting path, change `base`, manifest ID/start URL/scope, and navigation fallback/allowlist together, then update and rerun the subpath acceptance tests.
+
+## Quality commands
+
+Install browser binaries once before browser acceptance:
+
+```powershell
+npx playwright install chromium webkit
+npm run validate
+```
+
+Linux CI uses `npx playwright install --with-deps chromium webkit`.
+
+| Command                                     | Purpose                                                                           |
+| ------------------------------------------- | --------------------------------------------------------------------------------- |
+| `npm run format:check` / `npm run format`   | Check/apply Prettier formatting                                                   |
+| `npm run lint`                              | ESLint, TypeScript and React hooks rules                                          |
+| `npm run typecheck`                         | Strict TypeScript, including tests/configuration                                  |
+| `npm test`                                  | All domain, content, storage, component and lifecycle tests                       |
+| `npm test -- src\domain\arithmetic.test.ts` | Focused exhaustive arithmetic test                                                |
+| `npm run test:coverage`                     | Coverage with per-domain/storage gates, not a cosmetic global target              |
+| `npm run build`                             | Type-check and build the production PWA into `dist`                               |
+| `npm run test:e2e`                          | Chromium/WebKit against the existing production artifact at `/` and `/mathogram/` |
+| `npm run validate`                          | Formatting → lint → types → coverage → build → browser acceptance                 |
+
+Domain and storage require at least **95% line / 90% branch coverage**. Arithmetic tests enumerate the bounded operand/operator/result space with an independent crossing-ten oracle and explicit boundaries. Tests also cover content shape, all target columns, stale/repeated submissions, completed attempts, replay, recovery, quota/security failures, translation, keyboard/keypad, and immediate saves.
+
+Browser tests play a complete introductory puzzle, a later column above 10, deferred retries, final-pixel practice, resume/replay/restart, Czech detection and reset isolation. They check row hint settings and offline persistence, narrow phone, portrait/landscape phone, iPad and split-view dimensions, 44px touch controls, focus trapping, no horizontal overflow, reduced motion, local-only requests, manifest/icon sizes, and axe WCAG A/AA findings.
+
+Actual service-worker offline and update tests run in **Chromium**, separately from the WebKit interaction tests. The loopback-only server on port 4174 serves the production artifact plus a controlled new HTML precache revision to prove waiting activation and updated cold-offline shell loading. It is test infrastructure and never ships in `dist`. Ports 4173 and 4174 must be free; tests refuse to reuse an unknown server. Failed browser runs retain traces/screenshots; inspect `playwright-report` or `npx playwright show-report`.
+
+### Physical-device and release acceptance
+
+**Not performed: physical iPhone/iPad Safari or Home Screen acceptance.** No real devices were available to this implementation session. Playwright WebKit and desktop viewport emulation are not replacements.
+
+Before release, record actual device model, OS version, browser/Home Screen context, date, and pass/fail for installation and icon, standalone launch, safe areas/Home indicator, touch keypad, VoiceOver announcements/focus, pinch zoom, portrait/landscape/split view, background/foreground resume, and cold offline reopening after readiness. Exercise data cleanup, update acceptance/deferment, and storage denial where practical. The implementation intentionally avoids orientation locking and uses scrolling rather than clipping the keypad on short screens.
+
+Physical-device acceptance remains outstanding independently of automated browser checks and deployment.
+
+## Production delivery
+
+The production URL is **https://mathixel.com/**. Azure Static Web Apps hosts the app directly at the domain root in its default production slot, separate from the named `preview` environment. **https://davidmarek.github.io/mathogram/** remains available as a GitHub Pages mirror. The protected publishing branch is explicitly `main`.
+
+`.github\workflows\pages.yml` runs only for `main` pushes or manual dispatches. Validation and both deployment jobs independently require the exact repository, `refs/heads/main`, and **both the original actor and the rerun actor to be `davidmarek`**. Pull requests, fork contributions, schedules, issue comments, tags and other branches do not trigger this workflow. A manual dispatch publishes only when its `deploy` boolean is selected. Both deploy jobs consume the same already-tested build; neither rebuilds. Azure deploys the files at its domain root; the relative asset, manifest and worker URLs also preserve the GitHub Pages `/mathogram/` mirror.
+
+The workflow has no default token permissions. Validation gets only `contents: read`, no persisted checkout credentials, and no Pages/OIDC write token or Azure secret. Only the Pages deployment job has `pages: write` and `id-token: write` and uses the `github-pages` environment. The Azure deployment job gets only `actions: read` and uses `azure-production`; it does not check out or execute application code, and both Azure app and API builds are disabled. Workflow concurrency serializes releases without cancelling one mid-flight, with bounded job timeouts. All actions are pinned to full commit revisions, including the upload action used by the pinned Pages composite action. Failure artifacts expire after seven days, Pages artifacts after one day, and Azure production artifacts after thirty days to allow environment approval. Configure Pages uses `enablement: false`; it will not silently enable Pages.
+
+### Azure production and custom-domain setup
+
+1. Use the **same Azure Static Web App** as the PR previews. In Azure Portal, add **`mathixel.com`** under **Custom domains** and complete Azure's domain validation. A DNS CNAME alone does not register the hostname with Azure or provision its certificate. For an apex domain, follow Azure's TXT validation and your DNS provider's ALIAS/ANAME or flattened-CNAME instructions, pointing at the app's **production** hostname, not the `preview` hostname. If using Cloudflare proxying, use DNS-only during validation/certificate provisioning; do not work around TLS errors by disabling certificate verification.
+2. Create a GitHub environment named **`azure-production`**, with **`davidmarek` as a required reviewer**, self-review allowed if needed, administrator bypass disabled where available, and a selected **branch** deployment policy permitting only **`main`** (not a tag). This is separate from `azure-preview`.
+3. From Azure's **Manage deployment token**, add **`AZURE_STATIC_WEB_APPS_API_TOKEN`** as an environment secret in `azure-production`. It is the same app-scoped token used for previews, but GitHub cannot copy or reveal the existing environment secret. Do not move it to repository secrets or paste it into chat or source files. If rotating it, update both Azure environments.
+4. Keep the preview action repositories and pinned revisions in the Actions allowlist; production reuses them. Merge this change to `main`, or manually run **Validate and deploy production** on `main` with **deploy** selected, then approve the production deployment. An empty `deployment_environment` selects the production slot; preview deployments still explicitly select `preview`.
+5. Verify HTTPS at `https://mathixel.com/`, assets, manifest, icons, service worker and offline reopening. If analytics remains enabled, configure the existing Umami website to accept `mathixel.com` as well as the Pages hostname. Local saves and installed apps on Pages do not migrate automatically: the new domain has a separate storage origin.
+
+Adding this workflow does not itself publish production, add the environment secret, bind the Azure custom domain, or verify live acceptance. Production and Pages deployments run independently after validation; one can succeed while the other fails.
+
+### Repository security settings
+
+Maintain the server-side controls alongside the workflow:
+
+- Actions use a selected allowlist of the official action repositories in the production and preview workflows, with full-SHA pinning required. Transitive action dependencies must also remain allowlisted and pinned.
+- Default workflow tokens are read-only and cannot approve pull requests. Require workflow approval for **all outside collaborators**, including contributors whose previous workflows were approved.
+- Restrict updates to `main` to the repository owner, and prohibit force pushes and deletion without bypass. Restrict the `github-pages` and `azure-production` environments to the **branch** `main`, not a matching tag.
+- Keep repository write/admin access limited to trusted maintainers. CODEOWNERS requests the owner's review; it is not itself an authorization boundary.
+
+Fork PRs intentionally receive **no preview builds or deployments** from the checked-in preview workflow. Same-repository PRs run validation, but deployment requires the owner's environment approval. Dependabot runs cannot access the regular Actions deployment secret and are not supported for deployment directly. Review the entire change, including workflow and dependency lifecycle scripts, before approving execution, deployment, or merging. A merge by the owner is a trust decision and can execute the merged code with read-only build permissions. Dependabot proposes weekly dependency updates; review action revisions and update the server-side allowlist if a new action repository is introduced.
+
+These restrictions keep production publishing owner-controlled. Preview CI deliberately permits same-repository PR execution; the outside-collaborator approval policy remains necessary because PRs can modify their own workflows. These controls cannot prevent people from reading public workflows, running copies in their own forks, GitHub processing incoming events, a compromised upstream dependency executing during an authorized build, or a compromised owner account changing controls. No self-hosted runner is used. Only the `azure-preview` and `azure-production` environments hold the Azure deployment token. This token can deploy to either slot: GitHub environment separation is an approval boundary, not an Azure credential-scoping boundary.
+
+Pages must be configured to use **GitHub Actions**. After each release, check the HTTPS start URL, refresh, assets, manifest/icons/worker, browser console and offline reopening. Renaming the owner/repository or publishing branch requires updating workflow gates, repository rules, environment policies and hosting paths together.
+
+## Azure PR previews
+
+`.github/workflows/azure-preview.yml` uses one Azure Static Web Apps named environment, **`preview`**, shared by all PRs. Opening, reopening, or updating a same-repository PR targeting `main` starts two independent jobs for its exact head commit: full validation with `npm run validate`, and a preview build with `npm run build`. Deployment depends only on the preview build, so environment approval and publishing can proceed while the slower validation job runs. A fresh deployment job waits for environment approval, downloads that run's build artifact, and publishes static files with **both app and API builds disabled**. It does not check out or execute PR code. The Azure token is referenced only by the upload step, and neither build nor validation uses a shared dependency cache.
+
+The upload step runs Microsoft's Static Web Apps deployment client container (`mcr.microsoft.com/appsvc/staticappsclient:stable`, the image `Azure/static-web-apps-deploy` wraps) directly instead of through that action. The action always hands the client the `pull_request` event payload, which makes Azure ignore `deployment_environment` and create a new environment named after the PR number for every PR until the Free-plan limit is reached. Without the event payload, the client deploys to the named `preview` environment, and the step fails if Azure reports any other environment URL.
+
+Production at **https://mathixel.com/** and the GitHub Pages mirror use the separate `main` workflow and still require full validation before publishing; PRs deploy only to the named `preview` slot. Azure hosts the preview build at the domain root; the same relative URLs support the Pages `/mathogram/` path. Deployment does not rebuild the artifact; full validation builds separately. The PR comment and workflow environment link identify the root preview; the comment includes the PR number and built head SHA and warns that validation runs independently. **An approved preview may deploy before validation finishes or even when validation fails; a later failure does not roll back the preview.** Check the validation result before merging. **The next approved deployment replaces the shared preview, including the content at earlier PR comments' URLs.** Azure's separate preview origin isolates preview saves and offline caches from production and GitHub Pages, but all PR previews share saves and offline caches with each other. Refresh and allow the service worker to update when switching between PRs. Previews are public; `noindex` headers discourage indexing but do not restrict access.
+
+### One-time setup
+
+1. In Azure Portal, use the production **Static Web App**, or create one in a dedicated resource group, for example `mathogram-previews`, using the **Free** plan and deployment source **Other**. Do not connect GitHub through the portal; the checked-in workflows manage deployment. Configure production/custom domains using the production setup above. The Free plan allows three preview environments; this workflow uses only one named slot regardless of the number of PRs.
+2. In GitHub **Settings → Environments**, create **`azure-preview`**. Configure **`davidmarek` as a required reviewer** before adding its secret. Allow self-review if the owner also initiates PRs; disable administrator bypass where available. If required-reviewer protection is unavailable, do not enable this workflow with a deployment secret until an equivalent approval gate is in place.
+3. Restrict that environment to the selected branch **`refs/pull/*/merge`** for PR runs. Leave the production **`github-pages`** environment restricted to `main`.
+4. In Azure, select **Manage deployment token**. Store it only as an **environment secret** named **`AZURE_STATIC_WEB_APPS_API_TOKEN`** in `azure-preview`, not as a repository secret or Dependabot secret. Never paste it into a PR, chat, or source file. This token can deploy to the entire dedicated Azure app; it is not a preview-only credential.
+5. In GitHub **Settings → Actions → General**, retain read-only default tokens and approval for **all outside collaborators**. Add **`actions/download-artifact`** and **`actions/github-script`** to the existing allowed actions, using the full revisions pinned in the preview workflow. The preview upload runs the mutable Microsoft deployment-client image `mcr.microsoft.com/appsvc/staticappsclient:stable` with the deployment token; review that supply-chain dependency as part of enabling it. Production still uses the pinned `Azure/static-web-apps-deploy` action, which wraps the same image.
+6. Merge the workflow after review. Open or update a same-repository PR, inspect the exact commit and workflow changes, then approve the `azure-preview` deployment when its build completes; full validation need not have finished. Verify the posted root URL, assets, installation, offline play, and local-save isolation, and check the independent validation result before merging. No live Azure deployment is established merely by adding this workflow.
+
+### Approval, updates, and cleanup
+
+Required environment review is the authorization boundary: a PR can change workflow YAML, so inspect it before approving any job that could receive the token. Keep write access limited to trusted maintainers. Fork PRs are deliberately skipped rather than using `pull_request_target` to execute outside code with elevated privileges. To preview an external or Dependabot change, first review it and bring the approved changes onto a maintainer-controlled branch with a new same-repository PR; do not expose the token to an untrusted workflow.
+
+Each new commit starts validation and a preview build again and requires a new deployment approval. The deployment rechecks that the PR is open at the built SHA after the approval wait, rejecting stale runs. Preview artifacts expire after one day; approve within that window or re-run the latest run to rebuild. Runs retain per-PR concurrency, while deployment jobs across all PRs share a separate concurrency group without cancelling active uploads. GitHub may replace pending jobs in that group; re-run the latest run for a still-open PR if its deployment was cancelled. The last successful deployment owns the shared URL.
+
+Closing or merging a PR does not delete the shared environment or start a cleanup job: deleting it could remove another PR's preview. A reopened PR can replace the same slot after its build and approval.
+
+**Migrating from per-PR environments:** earlier versions of this workflow, including the first shared-slot version that passed `deployment_environment` to `Azure/static-web-apps-deploy`, created a numbered environment per PR. Cancel old workflow runs still awaiting deployment or cleanup approval so they cannot create or delete environments using the old workflow. In the Azure app's **Environments** page, delete the old PR environments once; do not delete the production environment or the named `preview` environment. If all three slots are already occupied, free at least one before the first shared deployment. Open or update a PR after the workflow is merged and approve its latest run; re-running an old run still uses its old workflow. The shared slot is subsequently reused without per-PR cleanup approvals.

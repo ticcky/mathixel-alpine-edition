@@ -1,0 +1,154 @@
+import { expect } from '@playwright/test';
+import { test } from './helpers';
+import { puzzles } from '../../src/content/animals';
+import { difficulties, getDifficulty } from '../../src/domain/categories';
+import { createAttempt } from '../../src/domain/game';
+import { emptyProgress, STORAGE_KEY } from '../../src/storage/progress';
+import { messages } from '../../src/i18n';
+
+for (const language of ['en', 'cs'] as const) {
+  test(`gallery groups, short advanced play and artwork fit phones (${language})`, async ({
+    page,
+  }) => {
+    const t = messages[language];
+    await page.addInitScript(
+      ({ key, progress }) =>
+        localStorage.setItem(key, JSON.stringify(progress)),
+      { key: STORAGE_KEY, progress: emptyProgress(language) },
+    );
+    await page.setViewportSize({ width: 320, height: 740 });
+    await page.goto('./');
+    await expect(page.getByRole('combobox')).toHaveCount(0);
+    await expect(page.locator('.difficulty-group h2')).toHaveText(
+      difficulties.map((difficulty) => t[difficulty]),
+    );
+    for (const difficulty of difficulties) {
+      const group = page.getByRole('region', {
+        name: t[difficulty],
+        exact: true,
+      });
+      const expected = puzzles
+        .filter((puzzle) => getDifficulty(puzzle) === difficulty)
+        .sort((a, b) => a.pixels.length - b.pixels.length);
+      await expect(group.locator('.picture-card h3')).toHaveText(
+        expected.map((puzzle) => t[puzzle.name]),
+      );
+      await expect(group.locator('.card-exercises')).toHaveText(
+        expected.map((puzzle) => `${puzzle.pixels.length} ${t.exercises}`),
+      );
+    }
+    await page.getByRole('button', { name: new RegExp(t.rocket) }).click();
+    await expect(page.getByTestId('equation')).toHaveText(
+      /^\d+ [+−] \d+ [+−] \d+$/,
+    );
+    await page.getByRole('button', { name: t.gallery, exact: true }).click();
+    await expect(page.locator('.picture-card')).toHaveCount(puzzles.length);
+    const artwork = await page.locator('.card-art svg').evaluateAll((images) =>
+      images.map((image) => ({
+        pixels: [...image.querySelectorAll('rect')].map((pixel) => ({
+          x: pixel.getAttribute('x'),
+          y: pixel.getAttribute('y'),
+          width: pixel.getAttribute('width'),
+          height: pixel.getAttribute('height'),
+          fill: pixel.getAttribute('fill'),
+        })),
+      })),
+    );
+    expect(artwork).toEqual(
+      difficulties
+        .flatMap((difficulty) =>
+          puzzles
+            .filter((puzzle) => getDifficulty(puzzle) === difficulty)
+            .sort((a, b) => a.pixels.length - b.pixels.length),
+        )
+        .map((puzzle) => ({
+          pixels: puzzle.pixels.map((pixel) => ({
+            x: String(pixel.col - 1),
+            y: String(pixel.row - 1),
+            width: '1',
+            height: '1',
+            fill: puzzle.palette[pixel.color],
+          })),
+        })),
+    );
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    const fits = await page.locator('.card-art').evaluateAll((elements) =>
+      elements.every((art) => {
+        const bounds = art.getBoundingClientRect();
+        const image = art.querySelector('svg')!.getBoundingClientRect();
+        return (
+          image.left >= bounds.left &&
+          image.right <= bounds.right &&
+          image.top >= bounds.top &&
+          image.bottom <= bounds.bottom
+        );
+      }),
+    );
+    expect(fits).toBe(true);
+  });
+}
+
+for (const language of ['en', 'cs'] as const) {
+  for (const hasProgress of [false, true]) {
+    test(`gallery backgrounds fill every artwork area (${language}, ${hasProgress ? 'saved' : 'new'})`, async ({
+      page,
+    }) => {
+      const progress = emptyProgress(language);
+      if (hasProgress) {
+        const puzzle = puzzles[0]!;
+        const attempt = createAttempt(puzzle);
+        attempt.solved = [attempt.queue[0]!.pixelId];
+        progress.attempts[puzzle.id] = attempt;
+      }
+      await page.addInitScript(
+        ({ key, progress }) =>
+          localStorage.setItem(key, JSON.stringify(progress)),
+        { key: STORAGE_KEY, progress },
+      );
+      await page.goto('./');
+      const cards = page.locator('.picture-card');
+      await expect(cards).toHaveCount(puzzles.length);
+      await expect(cards.locator('progress')).toHaveCount(hasProgress ? 1 : 0);
+
+      for (const width of [1280, 768, 390, 320]) {
+        await page.setViewportSize({ width, height: 900 });
+        const layouts = await cards.evaluateAll((elements) =>
+          elements.map((card) => {
+            const art = card.querySelector('.card-art')!;
+            const bounds = card.getBoundingClientRect();
+            const artBounds = art.getBoundingClientRect();
+            const style = getComputedStyle(card);
+            return {
+              name: card.getAttribute('aria-label'),
+              background: getComputedStyle(art).backgroundColor,
+              cardBackground: style.backgroundColor,
+              topGap:
+                artBounds.top - bounds.top - parseFloat(style.borderTopWidth),
+              leftGap:
+                artBounds.left -
+                bounds.left -
+                parseFloat(style.borderLeftWidth),
+              fits: artBounds.right <= bounds.right,
+              height: artBounds.height,
+            };
+          }),
+        );
+        for (const layout of layouts) {
+          const context = `${layout.name} at ${width}px`;
+          expect(layout.background, context).not.toBe('rgba(0, 0, 0, 0)');
+          expect(layout.background, context).not.toBe(layout.cardBackground);
+          expect(Math.abs(layout.topGap), context).toBeLessThan(1);
+          expect(Math.abs(layout.leftGap), context).toBeLessThan(1);
+          expect(layout.fits, context).toBe(true);
+          if (width <= 700)
+            expect(layout.height, context).toBe(width <= 360 ? 125 : 145);
+          else expect(layout.height, context).toBeGreaterThanOrEqual(190);
+        }
+      }
+    });
+  }
+}
